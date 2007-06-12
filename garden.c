@@ -50,6 +50,8 @@ int garden_session(sessiont *s, int flag, char *newuser);
 int plugin_post_auth(struct param_post_auth *data)
 {
     // Ignore if user authentication was successful
+    // In the case of the radius Wall-Authenticated-User, vendor-supplied
+    // attribute, auth_allowed will be 1 anyway, as will be walled_garden.
     if (data->auth_allowed)
 	return PLUGIN_RET_OK;
 
@@ -294,4 +296,3 @@ void plugin_done()
 	system(down_commands[i]);
     }
 }
-

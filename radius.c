@@ -472,6 +472,7 @@ void processrad(uint8_t *buf, int len, char socket_index)
 	uint8_t routes = 0;
 	int r_code;
 	int r_id;
+	int wall_user;
 
 	CSTAT(processrad);
 
@@ -569,6 +570,7 @@ void processrad(uint8_t *buf, int len, char socket_index)
 			{
 				// Login successful
 				// Extract IP, routes, etc
+				// TODO: Extract the walled-garden flag.
 				uint8_t *p = buf + 20;
 				uint8_t *e = buf + len;
 				for (; p + 2 <= e && p[1] && p + p[1] <= e; p += p[1])
@@ -595,6 +597,20 @@ void processrad(uint8_t *buf, int len, char socket_index)
 							// handle old-format ascend DNS attributes below
 						    	p += 6;
 						}
+						else if (vendor == 1337 && attrib == 1) {
+							//iseek Communications walled-garden hack
+							if (attrib_length != 1) {
+								LOG(3, s, session[s].tunnel, "      Error, incorrect length walled-garden attribute\n");
+								continue;
+							}
+							LOG(3, s, session[s].tunnel, "      Wall-Authenticated-User value: %.*s\n", attrib_length, p + 8);
+							wall_user = *(p + 8);
+							if (wall_user == 1) {
+								// If the attribute is set, we mark this session
+								// as needing to go into a walled garden.
+								session[s].walled_garden = 1;
+							}
+						} 
 						else
 						{
 							LOG(3, s, session[s].tunnel, "      Unknown vendor-specific\n");
