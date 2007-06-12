@@ -29,8 +29,9 @@ OBJS = arp.o cli.o cluster.o constants.o control.o icmp.o l2tpns.o \
     ll.o md5.o ppp.o radius.o tbf.o util.o
 
 PROGRAMS = l2tpns nsctl
-PLUGINS = autosnoop.so autothrottle.so clitousername.so editcallingstationid.so garden.so \
-	  sessionctl.so setrxspeed.so snoopctl.so stripdomain.so throttlectl.so
+PLUGINS = appendrealm.so autosnoop.so autothrottle.so clitousername.so \
+	  editcallingstationid.so garden.so sessionctl.so setrxspeed.so \
+	  snoopctl.so stripdomain.so throttlectl.so
 
 DEFINES += -DSTATISTICS
 DEFINES += -DSTAT_CALLS
@@ -123,6 +124,7 @@ radius.o: radius.c md5.h constants.h l2tpns.h plugin.h util.h cluster.h
 tbf.o: tbf.c l2tpns.h util.h tbf.h
 util.o: util.c l2tpns.h bgp.h
 bgp.o: bgp.c l2tpns.h bgp.h util.h
+appendrealm.so: appendrealm.c l2tpns.h plugin.h
 autosnoop.so: autosnoop.c l2tpns.h plugin.h
 autothrottle.so: autothrottle.c l2tpns.h plugin.h
 clitousername.so: clitousername.c l2tpns.h plugin.h

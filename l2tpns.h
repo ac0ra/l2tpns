@@ -622,6 +622,9 @@ typedef struct
 		int hold;
 	} neighbour[BGP_NUM_PEERS];
 #endif
+	
+	char		append_realm[MAXUSER-96];	
+
 } configt;
 
 enum config_typet { INT, STRING, UNSIGNED_LONG, SHORT, BOOL, IPv4, IPv6 };

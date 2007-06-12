@@ -21,9 +21,10 @@ int plugin_pre_auth(struct param_pre_auth *data)
 	tmp_calling[0] = '0';
 	//Miss the 61
 	p = &data->s->calling[2];
-	//Copy in the remaining part of the username
+	//Copy in the remaining part of the username and null terminate
 	strncpy(tmp + 1, data->s->calling, strlen(data->s->calling) - 2);
-	
+	tmp[strlen(data->s->calling) - 1] = 0;
+
 	//Assign this to both the username and the calling station id
 	strncpy(data->s->calling, tmp, MAXTEL);
 	
