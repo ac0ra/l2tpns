@@ -115,3 +115,13 @@ set accounting_dir "/var/run/l2tpns/acct"
 
 # Walled garden
 #load plugin "garden"
+
+# Edit the calling station ID to remove 61 and add 0
+#load plugin "editcsid"
+
+# Set the username to be the calling station ID
+#load plugin "clitousername"
+
+# Append "@test.realm" to the username
+#load plugin "appendrealm"
+#set append_realm "test.realm"

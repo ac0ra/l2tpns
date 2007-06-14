@@ -11,13 +11,11 @@ static struct pluginfuncs *f = 0;
 
 int plugin_pre_auth(struct param_pre_auth *data)
 {
-    	char *p, *ptmp, *realm;
+    	char *p, *ptmp;
+	char tmp[MAXUSER];
 	size_t userlen = 0;
 	char *at = "@";
-
-	//Alloc some memory
-	ptmp = malloc(MAXUSER);
-	realm = malloc(4096);
+	ptmp = &tmp[0];
 
    	if (!data->continue_auth) return PLUGIN_RET_STOP;
 
@@ -38,17 +36,18 @@ int plugin_pre_auth(struct param_pre_auth *data)
 	strcat(ptmp, at);
 
 	//Copy in the realm
-	realm = strncpy(realm, f->getconfig("append_realm", STRING), MAXUSER - (userlen + 1));
-	strcat(ptmp, realm);
+	strncat(ptmp, f->getconfig("append_realm", STRING), MAXUSER - (userlen + 1));
+		
+	//Let's recreate memory with the correct size
+	free(data->username);
+	data->username = malloc(MAXUSER);
 	
 	//Assign this to both the username and the calling station id
+	strncpy(data->s->user, ptmp, MAXUSER);
 	strncpy(data->username, ptmp, MAXUSER);
-	
-	f->log(3, 0, 0, "Appended or replaced realm. Username: \"%s\"\n", data->username);
 
-	//Free our memory
-	free(ptmp);
-	free(realm);
+	
+	f->log(3, 0, 0, "Appended or replaced realm. Username: \"%s\"\n", data->s->user);
 
 	return PLUGIN_RET_OK;
 }

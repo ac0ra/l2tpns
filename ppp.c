@@ -230,10 +230,7 @@ void processchap(sessionidt s, tunnelidt t, uint8_t *p, uint16_t l)
 		p += 16;
 		l -= 16;
 
-		// Fix a bug with whoever wrote this
-		// Memory is cheap - disconnecting thousands of LNS users is not.
-		//packet.username = calloc(l + 1, 1);
-		packet.username = calloc(MAXUSER, 1);
+		packet.username = calloc(l + 1, 1);
 		memcpy(packet.username, p, l);
 
 		run_plugins(PLUGIN_PRE_AUTH, &packet);

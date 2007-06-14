@@ -1,7 +1,7 @@
 Summary: A high-speed clustered L2TP LNS
 Name: l2tpns
 Version: 2.1.21
-Release: 1
+Release: 6
 License: GPL
 Group: System Environment/Daemons
 Source: http://optusnet.dl.sourceforge.net/sourceforge/l2tpns/l2tpns-%{version}.tar.gz
@@ -43,5 +43,10 @@ rm -rf %{buildroot}
 %attr(644,root,root) /usr/share/man/man[58]/*
 
 %changelog
-* Fri Dec 1 2006 Brendan O'Dea <bod@optus.net> 2.1.21-1
-- 2.1.21 release, see /usr/share/doc/l2tpns-2.1.21/Changes
+* Wed Jun 13 2007 Robert McLeay <robert@iseek.com.au> 2.1.21-1
+- Reroll with new tarball + iseek patches
+* Fri Aug 4 2006 Stuart Low <stuart@iseek.com.au> 2.1.20-1
+- Reroll of 2.1.19 with 2.1.20 tarball.
+- Includes some vendor specific attribute bug fixes
+* Fri Jun 23 2006 Brendan O'Dea <bod@optus.net> 2.1.19-1
+- 2.1.19 release, see /usr/share/doc/l2tpns-2.1.19/Changes
