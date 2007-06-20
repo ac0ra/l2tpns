@@ -603,8 +603,8 @@ void processrad(uint8_t *buf, int len, char socket_index)
 								LOG(3, s, session[s].tunnel, "      Error, incorrect length walled-garden attribute\n");
 								continue;
 							}
-							LOG(3, s, session[s].tunnel, "      Wall-Authenticated-User value: %.*s\n", attrib_length, p + 8);
 							wall_user = *(p + 8);
+							LOG(3, s, session[s].tunnel, "      Wall-Authenticated-User value:%s\n", wall_user);
 							if (wall_user == 1) {
 								// If the attribute is set, we mark this session
 								// as needing to go into a walled garden.
