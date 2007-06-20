@@ -598,18 +598,14 @@ void processrad(uint8_t *buf, int len, char socket_index)
 						    	p += 6;
 						}
 						else if (vendor == 1337 && attrib == 1) {
-							//iseek Communications walled-garden hack
-							if (attrib_length != 1) {
-								LOG(3, s, session[s].tunnel, "      Error, incorrect length walled-garden attribute\n");
-								continue;
-							}
-							wall_user = *(p + 8);
-							LOG(3, s, session[s].tunnel, "      Wall-Authenticated-User value:%s\n", wall_user);
-							if (wall_user == 1) {
+//							wall_user = *(p + 8);
+//							LOG(3, s, session[s].tunnel, "Wall-Authenticated-User value: %d\n", wall_user);
+							LOG(3, s, session[s].tunnel, "Wall gardening this session\n");
+//							if (wall_user == 1) {
 								// If the attribute is set, we mark this session
 								// as needing to go into a walled garden.
 								session[s].walled_garden = 1;
-							}
+//							}
 						} 
 						else
 						{
