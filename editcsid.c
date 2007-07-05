@@ -25,7 +25,7 @@ int plugin_pre_auth(struct param_pre_auth *data)
 
 	// Add the 0
 	tmp_calling[0] = '0';
-	//Miss the 61
+	//Miss the 61 (first two digits)
 	p = &data->s->calling[2];
 	//Copy in the remaining part of the username and null terminate
 	strncpy(tmp + 1, p, strlen(data->s->calling) - 2);
