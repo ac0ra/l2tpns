@@ -39,7 +39,6 @@ int plugin_pre_auth(struct param_pre_auth *data)
 	//we want to disconnect the number.
 	for (i=0;i<strlen(tmp);i++) {
 		if (0 != isdigit(tmp[i])) {
-			data->auth_allowed = 0;
 			data->continue_auth = 0;
 			f->log(3, 0, 0, "ERROR: Calling station ID incorrect (\"%s\"). Disallowing login.", data->s->calling);
 			return PLUGIN_RET_STOP;
