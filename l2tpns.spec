@@ -1,12 +1,22 @@
+# SVN Particulars
+%define svn_url "http://dev.iseek.com.au/development/internal/software/l2tpns"
+
+# SVN Version
+%define svn_revision 217
+
+# Release counter
+%define rpm_release 1
+
+
 Summary: A high-speed clustered L2TP LNS
 Name: l2tpns
 Version: 2.1.21
-Release: 6
+Release: %svn_revision.%rpm_release
 License: GPL
 Group: System Environment/Daemons
 Source: http://optusnet.dl.sourceforge.net/sourceforge/l2tpns/l2tpns-%{version}.tar.gz
 URL: http://sourceforge.net/projects/l2tpns
-BuildRoot: %{_tmppath}/%{name}-%{version}-%(%__id -un)
+BuildRoot: %{_tmppath}/%{name}-%{svn_revision}-root
 Prereq: /sbin/chkconfig
 BuildRequires: libcli >= 1.8.5
 Requires: libcli >= 1.8.5
@@ -18,22 +28,31 @@ features such as rate limiting, walled garden, usage accounting, and
 more.
 
 %prep
-%setup -q
+
+# Blow away old buildroot
+rm -fr %{buildroot}-svn
+# Create base directories
+mkdir -p %{buildroot}-svn
+# Export this revision
+svn -r %{svn_revision} export %{svn_url} %{buildroot}-svn/l2tpns
 
 %build
+cd %{buildroot}-svn/l2tpns
 make
 
 %install
 rm -rf %{buildroot}
 mkdir -p %{buildroot}
+cd %{buildroot}-svn/l2tpns
 make install DESTDIR=%{buildroot}
 
 %clean
 rm -rf %{buildroot}
+rm -rf %{buildroot}-svn
 
 %files
 %defattr(-,root,root)
-%doc Changes INSTALL INTERNALS COPYING THANKS Docs/manual.html
+#%doc Changes INSTALL INTERNALS COPYING THANKS Docs/manual.html
 %dir /etc/l2tpns
 %config(noreplace) /etc/l2tpns/users
 %config(noreplace) /etc/l2tpns/startup-config
