@@ -2524,6 +2524,17 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 					{
 						controlt *c = controlnew(11); // ICRP
 
+						/* check for existing session with this id */
+						for (s = 1; s <= config->cluster_highest_sessionid ; ++s)
+						{
+							if (!session[s].opened)
+								continue;
+
+							if (session[s].tunnel == t && session[s].far == assession)
+								LOG(3, s, t, "Duplicate LAC session id: live t: %d s: %d inbound t: %d s: %d", session[s].tunnel, session[s].far, t, assession);
+//								sessionkill(s, "Duplicate LAC session id");
+						}
+
 						s = sessionfree;
 						sessionfree = session[s].next;
 						memset(&session[s], 0, sizeof(session[s]));
