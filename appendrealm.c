@@ -25,7 +25,7 @@ int plugin_pre_auth(struct param_pre_auth *data)
 		*p = 0;
 		
 	//Add realm
-    snprintf(sizeof(tmp), "%s@%s", data->username, realm);
+	snprintf(tmp, sizeof(tmp), "%s@%s", data->username, realm);
 	free(data->username);
 	data->username = strdup(tmp);
 
