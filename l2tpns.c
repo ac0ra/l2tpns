@@ -2531,8 +2531,10 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 								continue;
 
 							if (session[s].tunnel == t && session[s].far == asession)
-								 LOG(3, s, t, "Duplicate LAC session id: %d/%d established as %d/%d\n", tunnel[t].far, asession, t, s);
-//								sessionkill(s, "Duplicate LAC session id");
+							{
+								LOG(3, s, t, "Duplicate LAC session id: %d/%d established as %d/%d\n", tunnel[t].far, asession, t, s);
+								sessionkill(s, "Duplicate LAC session id");
+							}
 						}
 
 						s = sessionfree;
