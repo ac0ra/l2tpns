@@ -11,42 +11,24 @@ static struct pluginfuncs *f = 0;
 
 int plugin_pre_auth(struct param_pre_auth *data)
 {
-    	char *p, *ptmp;
 	char tmp[MAXUSER];
-	size_t userlen = 0;
-	char *at = "@";
-	ptmp = &tmp[0];
+	char *realm = f->getconfig("append_realm", STRING);
+	char *p;
 
    	if (!data->continue_auth) return PLUGIN_RET_STOP;
+	if (!realm) return PLUGIN_RET_OK;
 
-	f->log(3, 0, 0, "Seeking to append realm: \"%s\"\n", f->getconfig("append_realm", STRING));
+	f->log(3, 0, 0, "Seeking to append realm: \"%s\"\n", realm);
 	
-	//Get the size to copy
-	if ((p = strchr(data->username, '@'))) {
-		userlen = p - data->username;
-	} else {
-		userlen = strlen(data->username);
-	}
-	
-	//Copy in the pre-realm part of the username, or all of it
-	//if there is no realm
-	strncpy(ptmp, data->username, userlen);
-
-	//Add the @ symbol
-	strcat(ptmp, at);
-
-	//Copy in the realm
-	strncat(ptmp, f->getconfig("append_realm", STRING), MAXUSER - (userlen + 1));
+	//Remove existing realm
+	if ((p = strchr(data->username, '@')))
+		*p = 0;
 		
-	//Let's recreate memory with the correct size
+	//Add realm
+    snprintf(sizeof(tmp), "%s@%s", data->username, realm);
 	free(data->username);
-	data->username = malloc(MAXUSER);
-	
-	//Assign this to both the username and the calling station id
-	strncpy(data->s->user, ptmp, MAXUSER);
-	strncpy(data->username, ptmp, MAXUSER);
+	data->username = strdup(tmp);
 
-	
 	f->log(3, 0, 0, "Appended or replaced realm. Username: \"%s\"\n", data->s->user);
 
 	return PLUGIN_RET_OK;
