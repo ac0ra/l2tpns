@@ -472,7 +472,6 @@ void processrad(uint8_t *buf, int len, char socket_index)
 	uint8_t routes = 0;
 	int r_code;
 	int r_id;
-	int wall_user;
 
 	CSTAT(processrad);
 
@@ -598,14 +597,10 @@ void processrad(uint8_t *buf, int len, char socket_index)
 						    	p += 6;
 						}
 						else if (vendor == 1337 && attrib == 1) {
-//							wall_user = *(p + 8);
-//							LOG(3, s, session[s].tunnel, "Wall-Authenticated-User value: %d\n", wall_user);
 							LOG(3, s, session[s].tunnel, "Wall gardening this session\n");
-//							if (wall_user == 1) {
-								// If the attribute is set, we mark this session
-								// as needing to go into a walled garden.
-								session[s].walled_garden = 1;
-//							}
+							// If the attribute is set, we mark this session
+							// as needing to go into a walled garden.
+							session[s].walled_garden = 1;
 						} 
 						else
 						{

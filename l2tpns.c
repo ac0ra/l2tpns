@@ -2530,8 +2530,8 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 							if (!session[s].opened)
 								continue;
 
-							if (session[s].tunnel == t && session[s].far == assession)
-								LOG(3, s, t, "Duplicate LAC session id: live t: %d s: %d inbound t: %d s: %d", session[s].tunnel, session[s].far, t, assession);
+							if (session[s].tunnel == t && session[s].far == asession)
+								LOG(3, s, t, "Duplicate LAC session id: live t: %d s: %d inbound t: %d s: %d", session[s].tunnel, session[s].far, t, asession);
 //								sessionkill(s, "Duplicate LAC session id");
 						}
 
