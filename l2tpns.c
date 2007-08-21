@@ -1749,7 +1749,12 @@ void sessionkill(sessionidt s, char *reason)
 	}
 
 	session[s].die = TIME;
-	sessionshutdown(s, reason, CDN_ADMIN_DISC, TERM_ADMIN_RESET);  // close radius/routes, etc.
+//	sessionshutdown(s, reason, CDN_ADMIN_DISC, TERM_ADMIN_RESET);  // close radius/routes, etc.
+	sessionshutdown(s, (reason ? reason : "Murdered!"), (reason ? 3 : 0),  0, TERM_ADMIN_RESET);  // close radius/routes, etc.
+
+	if(!reason)
+		reason = "Murdered!";
+
 	if (sess_local[s].radius)
 		radiusclear(sess_local[s].radius, s); // cant send clean accounting data, session is killed
 
@@ -2537,7 +2542,22 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 							}
 						}
 
+//						s = sessionfree;
+						/* check for existing session with this id */
+						for (s = 1; s <= config->cluster_highest_sessionid ; ++s)
+						{
+							if(!session[s].opened) continue;
+							if(session[s].tunnel != t || session[s].far != asession) continue;
+
+							/* work-around broken GGSN */
+							LOG(2, s, t, "Duplicate session (%d/%d)\n", tunnel[t].far, session[s].far);
+							sessionkill(s,NULL);
+							break;
+						}
+
+						if( s > config->cluster_highest_sessionid )
 						s = sessionfree;
+							
 						sessionfree = session[s].next;
 						memset(&session[s], 0, sizeof(session[s]));
 
@@ -4621,6 +4641,7 @@ int sessionsetup(sessionidt s, tunnelidt t)
 		{
 			LOG(0, s, t, "   No IP allocated.  The IP address pool is FULL!\n");
 			sessionshutdown(s, "No IP addresses available.", CDN_TRY_ANOTHER, TERM_SERVICE_UNAVAILABLE);
+			
 			return 0;
 		}
 		LOG(3, s, t, "   No IP allocated.  Assigned %s from pool\n",
