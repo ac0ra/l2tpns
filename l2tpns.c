@@ -2537,26 +2537,15 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 
 							if (session[s].tunnel == t && session[s].far == asession)
 							{
+								/* Work around broken GGSN */
 								LOG(3, s, t, "Duplicate LAC session id: %d/%d established as %d/%d\n", tunnel[t].far, asession, t, s);
-								sessionkill(s, "Duplicate LAC session id");
+								sessionkill(s, NULL);
+								break;
 							}
 						}
 
-//						s = sessionfree;
-						/* check for existing session with this id */
-						for (s = 1; s <= config->cluster_highest_sessionid ; ++s)
-						{
-							if(!session[s].opened) continue;
-							if(session[s].tunnel != t || session[s].far != asession) continue;
-
-							/* work-around broken GGSN */
-							LOG(2, s, t, "Duplicate session (%d/%d)\n", tunnel[t].far, session[s].far);
-							sessionkill(s,NULL);
-							break;
-						}
-
-						if( s > config->cluster_highest_sessionid )
-						s = sessionfree;
+						if( s > config->cluster_highest_sessionid ) 
+								s = sessionfree;
 							
 						sessionfree = session[s].next;
 						memset(&session[s], 0, sizeof(session[s]));
