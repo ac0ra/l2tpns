@@ -11,7 +11,7 @@ static struct pluginfuncs *f = 0;
 
 int plugin_pre_auth(struct param_pre_auth *data)
 {
-	char tmp[MAXUSER];
+	char *tmp = malloc(MAXUSER);
 	char *realm = f->getconfig("append_realm", STRING);
 	char *p;
 
