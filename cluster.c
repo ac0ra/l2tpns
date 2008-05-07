@@ -886,7 +886,7 @@ void cluster_heartbeat()
 		exit(1);
 	}
 
-	LOG(3, 0, 0, "Sending v%d heartbeat #%d, change #%" PRIu64 " with %d changes "
+	LOG(6, 0, 0, "Sending v%d heartbeat #%d, change #%" PRIu64 " with %d changes "
 		     "(%d x-sess, %d x-tunnels, %d highsess, %d hightun, size %d)\n",
 	    HB_VERSION, h.seq, h.table_version, config->cluster_num_changes,
 	    count, tcount, config->cluster_highest_sessionid,
@@ -1114,7 +1114,7 @@ static int cluster_handle_bytes(uint8_t *data, int size)
 
 	b = (bytest *) data;
 
-	LOG(3, 0, 0, "Got byte counter update (size %d)\n", size);
+	LOG(6, 0, 0, "Got byte counter update (size %d)\n", size);
 
 				/* Loop around, adding the byte
 				counts to each of the sessions. */
