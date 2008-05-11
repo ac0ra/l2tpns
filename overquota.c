@@ -138,7 +138,7 @@ int plugin_control(struct param_control *data)
     if (s->overquota_garden == flag)
     {
 	data->response = NSCTL_RES_ERR;
-	data->additional = flag ? "already in walled overquota" : "not in walled overquota";
+	data->additional = flag ? "already in overquota garden" : "not in overquota garden";
 	return PLUGIN_RET_STOP;
     }
 

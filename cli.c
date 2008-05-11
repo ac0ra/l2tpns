@@ -494,7 +494,7 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 	}
 
 	// Show Summary
-	cli_print(cli, "%5s %4s %-32s %-15s %s %s %s %s %10s %10s %10s %4s %-15s %s",
+	cli_print(cli, "%5s %4s %-32s %-15s %s %s %s %s %s %10s %10s %10s %4s %-15s %s",
 			"SID",
 			"TID",
 			"Username",
@@ -502,6 +502,7 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 			"I",
 			"T",
 			"G",
+			"O",
 			"6",
 			"opened",
 			"downloaded",
