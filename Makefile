@@ -31,7 +31,7 @@ OBJS = arp.o cli.o cluster.o constants.o control.o icmp.o l2tpns.o \
 PROGRAMS = l2tpns nsctl
 PLUGINS = appendrealm.so autosnoop.so autothrottle.so clitousername.so \
 	  editcsid.so garden.so sessionctl.so setrxspeed.so \
-	  snoopctl.so stripdomain.so throttlectl.so
+	  snoopctl.so stripdomain.so throttlectl.so overquota.so
 
 DEFINES += -DSTATISTICS
 DEFINES += -DSTAT_CALLS
@@ -130,6 +130,7 @@ autothrottle.so: autothrottle.c l2tpns.h plugin.h
 clitousername.so: clitousername.c l2tpns.h plugin.h
 editcsid.so: editcsid.c l2tpns.h plugin.h
 garden.so: garden.c l2tpns.h plugin.h control.h
+overquota.so: overquota.c l2tpns.h plugin.h control.h
 sessionctl.so: sessionctl.c l2tpns.h plugin.h control.h
 setrxspeed.so: setrxspeed.c l2tpns.h plugin.h
 snoopctl.so: snoopctl.c l2tpns.h plugin.h control.h

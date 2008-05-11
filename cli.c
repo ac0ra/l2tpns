@@ -440,6 +440,8 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 				cli_print(cli, "\tIntercepted:\tno");
 
 			cli_print(cli, "\tWalled Garden:\t%s", session[s].walled_garden ? "YES" : "no");
+                        cli_print(cli, "\tOverQuota Garden:\t%s", session[s].overquota_garden ? "YES" : "no");
+
 			{
 				int t = (session[s].throttle_in || session[s].throttle_out);
 				cli_print(cli, "\tThrottled:\t%s%s%.0d%s%s%.0d%s%s",
@@ -511,7 +513,7 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 	for (i = 1; i < MAXSESSION; i++)
 	{
 		if (!session[i].opened) continue;
-		cli_print(cli, "%5d %4d %-32s %-15s %s %s %s %s %10u %10lu %10lu %4u %-15s %s",
+		cli_print(cli, "%5d %4d %-32s %-15s %s %s %s %s %s %10u %10lu %10lu %4u %-15s %s",
 				i,
 				session[i].tunnel,
 				session[i].user[0] ? session[i].user : "*",
@@ -519,6 +521,7 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 				(session[i].snoop_ip && session[i].snoop_port) ? "Y" : "N",
 				(session[i].throttle_in || session[i].throttle_out) ? "Y" : "N",
 				(session[i].walled_garden) ? "Y" : "N",
+				(session[i].overquota_garden) ? "Y" : "N",
 				(session[i].ppp.ipv6cp == Opened) ? "Y" : "N",
 				abs(time_now - (unsigned long)session[i].opened),
 				(unsigned long)session[i].cout,

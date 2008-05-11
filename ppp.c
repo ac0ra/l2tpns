@@ -961,7 +961,7 @@ static void ipcp_open(sessionidt s, tunnelidt t)
 
 	change_state(s, ipcp, Opened);
 
-	if (!(session[s].walled_garden || session[s].flags & SESSION_STARTED))
+	if (!(session[s].walled_garden || session[s].overquota_garden || session[s].flags & SESSION_STARTED))
 	{
 		uint16_t r = radiusnew(s);
 		if (r)
