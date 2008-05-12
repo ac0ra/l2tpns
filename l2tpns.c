@@ -1814,7 +1814,7 @@ static void tunnelshutdown(tunnelidt t, char *reason, int result, int error, cha
 		tunnelkill(t, reason);
 		return;
 	}
-	LOG(1, 0, t, "Shutting down tunnel %d [%-15s] (%s)\n", t, fmtaddr(htonl(tunnel[i].ip), 0), reason);
+	LOG(1, 0, t, "Shutting down tunnel %d [%-15s] (%s)\n", t, fmtaddr(htonl(tunnel[t].ip), 0), reason);
 
 	// close session
 	for (s = 1; s <= config->cluster_highest_sessionid ; ++s)
