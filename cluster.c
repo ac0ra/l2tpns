@@ -363,24 +363,6 @@ int master_garden_packet(sessionidt s, uint8_t *data, int size)
 
 }
 
-// Exactly the same as walled garden but with modified log
-int master_overquota_packet(sessionidt s, uint8_t *data, int size)
-{
-        uint8_t buf[65536];     // Vast overkill.
-        uint8_t *p = buf;
-
-        if (!config->cluster_master_address) // No election has been held yet. Just skip it.
-                return -1;
-
-        LOG(4, 0, 0, "Overquota garden packet to master (size %d)\n", size);
-
-        add_type(&p, C_GARDEN, s, data, size);
-
-        return peer_send_data(config->cluster_master_address, buf, (p-buf));
-
-}
-
-
 //
 // Send a chunk of data as a heartbeat..
 // We save it in the history buffer as we do so.
@@ -1256,7 +1238,6 @@ struct oldsession {
 	uint8_t l2tp_flags;
 	uint8_t reserved_old_snoop;
 	uint8_t walled_garden;
-	uint8_t	overquota_garden;
 	uint8_t flags1;
 	char random_vector[MAXTEL];
 	int random_vector_length;
@@ -1316,7 +1297,6 @@ static uint8_t *convert_session(struct oldsession *old)
 	new.snoop_ip = old->snoop_ip;
 	new.snoop_port = old->snoop_port;
 	new.walled_garden = old->walled_garden;
-	new.overquota_garden = old->overquota_garden;
 
 	memcpy(new.random_vector, old->random_vector, sizeof(new.random_vector));
 	memcpy(new.user, old->user, sizeof(new.user));
@@ -1357,11 +1337,11 @@ static int cluster_process_heartbeat(uint8_t *data, int size, int more, uint8_t 
 	int i, type;
 	int hb_ver = more;
 
-#if HB_VERSION != 6 
+#if HB_VERSION != 5
 # error "need to update cluster_process_heartbeat()"
 #endif
 
-	// we handle versions 3 through 6 
+	// we handle versions 3 through 5
 	if (hb_ver < 3 || hb_ver > HB_VERSION) {
 		LOG(0, 0, 0, "Received a heartbeat version that I don't support (%d)!\n", hb_ver);
 		return -1; // Ignore it??

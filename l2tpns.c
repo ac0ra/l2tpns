@@ -1184,14 +1184,6 @@ static void processipout(uint8_t *buf, int len)
 		return;
 	}
 
-	if (sp->overquota_garden && !config->cluster_iam_master)
-        {
-                // We are overquota gardening this
-                master_overquota_packet(s, data, size);
-                return;
-        }
-
-
 	LOG(5, s, t, "Ethernet -> Tunnel (%d bytes)\n", len);
 
 	// Add on L2TP header
@@ -1301,14 +1293,7 @@ static void processipv6out(uint8_t * buf, int len)
 		// We are walled-gardening this
 		master_garden_packet(s, data, size);
 		return;
-	} else if (sp->overquota_garden && !config->cluster_iam_master)
-        {
-                // We are walled-gardening this
-                master_overquota_packet(s, data, size);
-                return;
-        }
-
-
+	}
 
 	LOG(5, s, t, "Ethernet -> Tunnel (%d bytes)\n", len);
 
@@ -1578,7 +1563,6 @@ void filter_session(sessionidt s, int filter_in, int filter_out)
 void sessionshutdown(sessionidt s, char const *reason, int cdn_result, int cdn_error, int term_cause)
 {
 	int walled_garden = session[s].walled_garden;
-	int overquota_garden = session[s].overquota_garden;
 
 
 	CSTAT(sessionshutdown);
@@ -2735,12 +2719,6 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 				return;
 			}
 
-			if (session[s].overquota_garden && !config->cluster_iam_master)
-                        {
-                                master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port);
-                                return;
-                        }
-
 			processipin(s, t, p, l);
 		}
 		else if (proto == PPPIPV6 && config->ipv6_prefix.s6_addr[0])
@@ -2757,11 +2735,6 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 				master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port);
 				return;
 			}
-			if (session[s].overquota_garden && !config->cluster_iam_master)
-                        {
-                                master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port);
-                                return;
-                        }
 
 			processipv6in(s, t, p, l);
 		}
@@ -4146,7 +4119,7 @@ void snoop_send_packet(uint8_t *packet, uint16_t size, in_addr_t destination, ui
 
 static int dump_session(FILE **f, sessiont *s)
 {
-	if (!s->opened || !s->ip || !(s->cin_delta || s->cout_delta) || !*s->user || s->walled_garden || s->overquota_garden)
+	if (!s->opened || !s->ip || !(s->cin_delta || s->cout_delta) || !*s->user || s->walled_garden)
 		return 1;
 
 	if (!*f)
@@ -4686,7 +4659,6 @@ int sessionsetup(sessionidt s, tunnelidt t)
 
 			if (config->allow_duplicate_users) continue;
 			if (session[s].walled_garden || session[i].walled_garden) continue;
-
 			if (!strcasecmp(user, session[i].user))
 				sessionkill(i, "Duplicate session for users");
 		}

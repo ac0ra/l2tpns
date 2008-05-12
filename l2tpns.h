@@ -276,7 +276,6 @@ typedef struct
 	in_addr_t snoop_ip;		// Interception destination IP
 	uint16_t snoop_port;		// Interception destination port
 	uint8_t walled_garden;		// is this session gardened?
-	uint8_t overquota_garden;	// is this session overquota?
 	uint8_t ipv6prefixlen;		// IPv6 route prefix length
 	struct in6_addr ipv6route;	// Static IPv6 route
 	char reserved_3[11];		// Space to expand structure without changing HB_VERSION
