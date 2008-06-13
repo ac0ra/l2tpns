@@ -22,7 +22,7 @@
 #define C_MASTER		15	// Tell a slave the address of the master.
 #define C_FORWARD_DAE		16	// A DAE packet for the master to handle
 
-#define HB_VERSION		5	// Protocol version number..
+#define HB_VERSION		6	// Protocol version number..
 #define HB_MAX_SEQ		(1<<30)	// Maximum sequence number. (MUST BE A POWER OF 2!)
 #define HB_HISTORY_SIZE		64	// How many old heartbeats we remember?? (Must be a factor of HB_MAX_SEQ)
 

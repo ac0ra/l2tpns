@@ -37,6 +37,8 @@
 #define MAXTEL		96		// telephone number
 #define MAXUSER		128		// username
 #define MAXPASS		128		// password
+#define MAXGARDEN       16              // maximum size of the garden name string
+#define MAXGARDENCOUNT  16              // maximum size of the garden name string
 #define MAXPLUGINS	20		// maximum number of plugins to load
 #define MAXRADSERVER	10		// max radius servers
 #define MAXROUTE	10		// max static routes per session
@@ -276,6 +278,7 @@ typedef struct
 	in_addr_t snoop_ip;		// Interception destination IP
 	uint16_t snoop_port;		// Interception destination port
 	uint8_t walled_garden;		// is this session gardened?
+        char  walled_garden_name[MAXGARDEN];       // name of the walled garden this user is in
 	uint8_t ipv6prefixlen;		// IPv6 route prefix length
 	struct in6_addr ipv6route;	// Static IPv6 route
 	char reserved_3[11];		// Space to expand structure without changing HB_VERSION
@@ -624,6 +627,7 @@ typedef struct
 #endif
 	
 	char		append_realm[MAXUSER-96];	
+        char            gardens[MAXGARDEN * MAXGARDENCOUNT];
 
 } configt;
 

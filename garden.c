@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <string.h>
 #include <malloc.h>
 #include <stdlib.h>
@@ -17,24 +18,25 @@ static struct pluginfuncs *f = 0;
 static int iam_master = 0;	// We're all slaves! Slaves I tell you!
 
 char *up_commands[] = {
-    "iptables -t nat -N garden >/dev/null 2>&1",		// Create a chain that all gardened users will go through
-    "iptables -t nat -F garden",
-    ". " PLUGINCONF "/build-garden",				// Populate with site-specific DNAT rules
-    "iptables -t nat -N garden_users >/dev/null 2>&1",		// Empty chain, users added/removed by garden_session
-    "iptables -t nat -F garden_users",
-    "iptables -t nat -A PREROUTING -j garden_users",		// DNAT any users on the garden_users chain
-    "sysctl -w net.ipv4.netfilter.ip_conntrack_max=512000"	// lots of entries
+    "/sbin/iptables -t nat -N %s >/dev/null 2>&1",		// Create a chain that all gardened users will go through
+    "/sbin/iptables -t nat -F %s",
+    ". " PLUGINCONF "/build-%s",				// Populate with site-specific DNAT rules
+    "/sbin/iptables -t nat -N %s_users >/dev/null 2>&1",		// Empty chain, users added/removed by garden_session
+    "/sbin/iptables -t nat -F %s_users",
+    "/sbin/iptables -t nat -A PREROUTING -j %s_users",		// DNAT any users on the garden_users chain
+    "/sbin/sysctl -w net.ipv4.netfilter.ip_conntrack_max=512000"	// lots of entries
     	     " net.ipv4.netfilter.ip_conntrack_tcp_timeout_established=18000 >/dev/null", // 5hrs
     NULL,
 };
 
 char *down_commands[] = {
-    "iptables -t nat -F PREROUTING",
-    "iptables -t nat -F garden_users",
-    "iptables -t nat -X garden_users",
-    "iptables -t nat -F garden",
-    "iptables -t nat -X garden",
-    "rmmod iptable_nat",	// Should also remove ip_conntrack, but
+    "/sbin/iptables -t nat -F PREROUTING",
+    "/sbin/iptables -t nat -F %s_users",
+    "/sbin/iptables -t nat -X %s_users",
+    "/sbin/iptables -t nat -F %s",
+    "/sbin/iptables -t nat -X %s",
+    // Not sure if this is valid anymore.  Commenting this out.
+    // "rmmod iptable_nat",	// Should also remove ip_conntrack, but
 				// doing so can take hours...  literally.
 				// If a master is re-started as a slave,
 				// either rmmod manually, or reboot.
@@ -156,12 +158,27 @@ int plugin_control(struct param_control *data)
 int plugin_become_master(void)
 {
     int i;
+    char gardens[MAXGARDEN * MAXGARDENCOUNT];
+    char *tok;
+    char temporary[MAXGARDEN + 200]; 
+
+    strncpy(gardens,config->gardens,MAXGARDEN * MAXGARDENCOUNT);
+
     iam_master = 1;	// We just became the master. Wow!
 
-    for (i = 0; up_commands[i] && *up_commands[i]; i++)
-    {
+    if (gardens[0] == 0)
+      strncpy(gardens,"gardens",7);
+    
+    tok = strtok(gardens,",");
+
+    while (tok != NULL) {
+      for (i = 0; up_commands[i] && *up_commands[i]; i++)
+      {
 	f->log(3, 0, 0, "Running %s\n", up_commands[i]);
-	system(up_commands[i]);
+        sprintf(temporary,up_commands[i],tok);
+	system(temporary);
+      }
+      tok = strtok(NULL,",");
     }
 
     return PLUGIN_RET_OK;
@@ -191,8 +208,9 @@ int garden_session(sessiont *s, int flag, char *newuser)
 	    f->fmtaddr(htonl(s->ip), 0));
 
 	snprintf(cmd, sizeof(cmd),
-	    "iptables -t nat -A garden_users -s %s -j garden",
-	    f->fmtaddr(htonl(s->ip), 0));
+                 "/sbin/iptables -t nat -A %s_users -s %s -j garden",
+                 s->walled_garden_name,
+                 f->fmtaddr(htonl(s->ip), 0));
 
 	f->log(3, sess, s->tunnel, "%s\n", cmd);
 	system(cmd);
@@ -227,8 +245,9 @@ int garden_session(sessiont *s, int flag, char *newuser)
 	s->cin_wrap = s->cout_wrap = 0;
 
 	snprintf(cmd, sizeof(cmd),
-	    "iptables -t nat -D garden_users -s %s -j garden",
-	    f->fmtaddr(htonl(s->ip), 0));
+	    "iptables -t nat -D garden_users -s %s -j %s",
+             f->fmtaddr(htonl(s->ip), 0),
+             s->walled_garden_name);
 
 	f->log(3, sess, s->tunnel, "%s\n", cmd);
 	while (--count)
@@ -248,6 +267,31 @@ int garden_session(sessiont *s, int flag, char *newuser)
     }
 
     return 1;
+}
+
+// Take down the ip tables firewall rules for the natting.
+
+void go_down(void)
+{
+    int i;
+    char gardens[MAXGARDEN * MAXGARDENCOUNT];
+    char *tok;
+    char temporary[MAXGARDEN + 200]; 
+
+    if (gardens[0] == 0)
+      strncpy(gardens,"gardens",7);
+    
+    tok = strtok(gardens,",");
+
+    while (tok != NULL) {
+      for (i = 0; down_commands[i] && *down_commands[i]; i++)
+      {
+        f->log(3, 0, 0, "Running %s\n", down_commands[i]);
+        sprintf(temporary,down_commands[i],tok);
+        system(temporary);
+      }
+      tok = strtok(NULL,",");
+    }
 }
 
 int plugin_init(struct pluginfuncs *funcs)
@@ -272,12 +316,7 @@ int plugin_init(struct pluginfuncs *funcs)
     /* master killed/crashed? */
     if (found_nat)
     {
-	int i;
-	for (i = 0; down_commands[i] && *down_commands[i]; i++)
-	{
-	    f->log(3, 0, 0, "Running %s\n", down_commands[i]);
-	    system(down_commands[i]);
-	}
+      go_down();
     }
 
     return 1;
@@ -285,14 +324,8 @@ int plugin_init(struct pluginfuncs *funcs)
 
 void plugin_done()
 {
-    int i;
-
     if (!iam_master)	// Never became master. nothing to do.
 	return;
 
-    for (i = 0; down_commands[i] && *down_commands[i]; i++)
-    {
-	f->log(3, 0, 0, "Running %s\n", down_commands[i]);
-	system(down_commands[i]);
-    }
+    go_down();
 }

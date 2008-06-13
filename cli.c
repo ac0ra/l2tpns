@@ -440,6 +440,10 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 				cli_print(cli, "\tIntercepted:\tno");
 
 			cli_print(cli, "\tWalled Garden:\t%s", session[s].walled_garden ? "YES" : "no");
+                        if (session[s].walled_garden) 
+                        {
+                          cli_print(cli, "\tWalled Garden Name:\t%s", session[s].walled_garden_name);
+                        }
 			{
 				int t = (session[s].throttle_in || session[s].throttle_out);
 				cli_print(cli, "\tThrottled:\t%s%s%.0d%s%s%.0d%s%s",

@@ -570,6 +570,10 @@ void processrad(uint8_t *buf, int len, char socket_index)
 				// Login successful
 				// Extract IP, routes, etc
 				// TODO: Extract the walled-garden flag.
+
+                                // I love the mixture of array style and pointer arthmatic
+                                // just remember p[a] is the same as *(p + a)
+
 				uint8_t *p = buf + 20;
 				uint8_t *e = buf + len;
 				for (; p + 2 <= e && p[1] && p + p[1] <= e; p += p[1])
@@ -596,11 +600,46 @@ void processrad(uint8_t *buf, int len, char socket_index)
 							// handle old-format ascend DNS attributes below
 						    	p += 6;
 						}
-						else if (vendor == 1337 && attrib == 1) {
+						else if (vendor == 1337 && attrib == 1) 
+                                                {
 							LOG(3, s, session[s].tunnel, "Wall gardening this session\n");
 							// If the attribute is set, we mark this session
 							// as needing to go into a walled garden.
-							session[s].walled_garden = 1;
+                                                        if (!session[s].walled_garden)
+                                                        {
+                                                          session[s].walled_garden = 1;
+                                                          strncpy(session[s].walled_garden_name,"garden",MAXGARDEN);
+                                                        }
+						} 
+                                                else if (vendor == 1337 && attrib == 2) 
+                                                {
+                                                        int walled_garden_name_size = MAXGARDEN;
+// My reading of the code suggest that the packet looks something like this at this point
+// 0123456789ABCDEF
+// SNVVVVALCCCCC....
+// 
+// S == 26
+// N == Total length of this chunk
+// V == Vender id
+// A == Attrib id
+// L == Length of the attribute
+// C == Content
+                                                        if (attrib_length < MAXGARDEN) 
+                                                        {
+                                                          walled_garden_name_size = attrib_length;
+                                                        } 
+                                                        else 
+                                                        {
+                                                          LOG(3, s, session[s].tunnel, "Walled garden name truncated");
+                                                        }
+
+							// If the attribute is set, we set the 
+                                                        // walled_garden_name
+                                                        session[s].walled_garden = 1;
+                                                        strncpy(session[s].walled_garden_name,
+                                                                (char *) (p+8),
+                                                                walled_garden_name_size);
+                                                        LOG(3, s, session[s].tunnel, "Custom walled garden '%s' for session\n",session[s].walled_garden_name);
 						} 
 						else
 						{
