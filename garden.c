@@ -48,7 +48,7 @@ char *down_commands[] = {
 #define F_CLEANUP	2
 
 //int garden_session(sessiont *s, int flag, char *newuser);
-int garden_session(sessiont *s, int flag, char *newuser, char *newgarden);
+int garden_session(sessiont *s, int flag, char *newuser);
 
 int plugin_post_auth(struct param_post_auth *data)
 {
@@ -72,7 +72,7 @@ int plugin_new_session(struct param_new_session *data)
 	return PLUGIN_RET_OK;	// Slaves don't do walled garden processing.
 
     if (data->s->walled_garden)
-	garden_session(data->s, F_GARDEN, 0, data->s->walled_garden_name);
+	garden_session(data->s, F_GARDEN, 0);
 
     return PLUGIN_RET_OK;
 }
@@ -83,7 +83,7 @@ int plugin_kill_session(struct param_new_session *data)
 	return PLUGIN_RET_OK;	// Slaves don't do walled garden processing.
 
     if (data->s->walled_garden)
-	garden_session(data->s, F_CLEANUP, 0, data->s->walled_garden_name);
+	garden_session(data->s, F_CLEANUP, 0);
 
     return PLUGIN_RET_OK;
 }
@@ -147,7 +147,11 @@ int plugin_control(struct param_control *data)
 	return PLUGIN_RET_STOP;
     }
 
-    garden_session(s, flag, data->argc > 2 ? data->argv[2] : 0, data->argc > 3 ? data->argv[3] : "garden");
+    strncpy(s->walled_garden_name, data->argc > 3 ? data->argv[3] : "garden", sizeof(data->argc > 3 ? data->argv[3] : "garden"));
+
+    f->log(5, session, s->tunnel, "Using garden of %s", s->walled_garden_name);
+
+    garden_session(s, flag, data->argc > 2 ? data->argv[2] : 0);
     f->session_changed(session);
 
     data->response = NSCTL_RES_OK;
@@ -189,12 +193,12 @@ int plugin_become_master(void)
 int plugin_new_session_master(sessiont *s)
 {	
     if (s->walled_garden)
-	garden_session(s, F_GARDEN, 0, s->walled_garden_name);
+	garden_session(s, F_GARDEN, 0);
 
     return PLUGIN_RET_OK;
 }
 
-int garden_session(sessiont *s, int flag, char *newuser, char *newgarden)
+int garden_session(sessiont *s, int flag, char *newuser)
 {
     char cmd[2048];
     sessionidt sess;
@@ -203,11 +207,6 @@ int garden_session(sessiont *s, int flag, char *newuser, char *newgarden)
     if (!s->opened) return 0;
 
     sess = f->get_id_by_session(s);
-
-    if (!strcmp(s->walled_garden_name, newgarden)) {
-        f->log(5, sess, s->tunnel, "Using garden of %s", newgarden);
-        strncpy(s->walled_garden_name, newgarden, sizeof(*newgarden));
-    }
 
     if (flag == F_GARDEN)
     {
