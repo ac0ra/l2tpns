@@ -162,12 +162,12 @@ int plugin_become_master(void)
     char *tok;
     char temporary[MAXGARDEN + 200]; 
 
-    strncpy(gardens,config->gardens,MAXGARDEN * MAXGARDENCOUNT);
+    strncpy(gardens,f->getconfig("gardens", STRING),MAXGARDEN * MAXGARDENCOUNT);
 
     iam_master = 1;	// We just became the master. Wow!
 
     if (gardens[0] == 0)
-      strncpy(gardens,"gardens",7);
+      strncpy(gardens,"garden",7);
     
     tok = strtok(gardens,",");
 
@@ -278,8 +278,10 @@ void go_down(void)
     char *tok;
     char temporary[MAXGARDEN + 200]; 
 
+    strncpy(gardens,f->getconfig("gardens", STRING),MAXGARDEN * MAXGARDENCOUNT);
+
     if (gardens[0] == 0)
-      strncpy(gardens,"gardens",7);
+      strncpy(gardens,"garden",7);
     
     tok = strtok(gardens,",");
 
