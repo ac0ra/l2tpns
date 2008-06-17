@@ -147,7 +147,7 @@ int plugin_control(struct param_control *data)
 	return PLUGIN_RET_STOP;
     }
 
-    garden_session(s, flag, data->argc > 2 ? data->argv[2] : 0, data->argc > 3 ? data->argv[3] : 0);
+    garden_session(s, flag, data->argc > 3 ? data->argv[2] : 0, data->argc > 4 ? data->argv[3] : 0);
     f->session_changed(session);
 
     data->response = NSCTL_RES_OK;
