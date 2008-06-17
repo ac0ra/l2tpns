@@ -72,7 +72,7 @@ int plugin_new_session(struct param_new_session *data)
 	return PLUGIN_RET_OK;	// Slaves don't do walled garden processing.
 
     if (data->s->walled_garden)
-	garden_session(data->s, F_GARDEN, 0, 0);
+	garden_session(data->s, F_GARDEN, 0, data->s->walled_garden_name);
 
     return PLUGIN_RET_OK;
 }
@@ -83,7 +83,7 @@ int plugin_kill_session(struct param_new_session *data)
 	return PLUGIN_RET_OK;	// Slaves don't do walled garden processing.
 
     if (data->s->walled_garden)
-	garden_session(data->s, F_CLEANUP, 0, 0);
+	garden_session(data->s, F_CLEANUP, 0, data->s->walled_garden_name);
 
     return PLUGIN_RET_OK;
 }
@@ -189,7 +189,7 @@ int plugin_become_master(void)
 int plugin_new_session_master(sessiont *s)
 {	
     if (s->walled_garden)
-	garden_session(s, F_GARDEN, 0, 0);
+	garden_session(s, F_GARDEN, 0, s->walled_garden_name);
 
     return PLUGIN_RET_OK;
 }
@@ -202,7 +202,11 @@ int garden_session(sessiont *s, int flag, char *newuser, char *newgarden)
     if (!s) return 0;
     if (!s->opened) return 0;
 
-    if (sizeof(*newgarden) == 0) {
+    sess = f->get_id_by_session(s);
+
+    f->log(4, sess, s->tunnel, "Supplied %s and %s", newuser, newgarden);
+
+    if (newgarden == 0) {
 	f->log(4, sess, s->tunnel, "Using default garden");
 	strncpy(s->walled_garden_name,"garden",7);
     } else {
@@ -210,7 +214,6 @@ int garden_session(sessiont *s, int flag, char *newuser, char *newgarden)
 	strncpy(s->walled_garden_name, newgarden, sizeof(*newgarden));
     }
 
-    sess = f->get_id_by_session(s);
     if (flag == F_GARDEN)
     {
 	f->log(2, sess, s->tunnel, "Garden user %s (%s) with name of %s \n", s->user,
