@@ -204,7 +204,7 @@ int garden_session(sessiont *s, int flag, char *newuser, char *newgarden)
 
     sess = f->get_id_by_session(s);
 
-    if (!(newgarden == 0)) {
+    if (newgarden != 0) {
         f->log(5, sess, s->tunnel, "Using garden of %s", newgarden);
         strncpy(s->walled_garden_name, newgarden, sizeof(*newgarden));
     }
