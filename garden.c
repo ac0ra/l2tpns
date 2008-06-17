@@ -174,8 +174,8 @@ int plugin_become_master(void)
     while (tok != NULL) {
       for (i = 0; up_commands[i] && *up_commands[i]; i++)
       {
-	f->log(3, 0, 0, "Running %s\n", up_commands[i]);
-        sprintf(temporary,up_commands[i],tok);
+	sprintf(temporary,up_commands[i],tok);
+	f->log(3, 0, 0, "Running %s\n", temporary);
 	system(temporary);
       }
       tok = strtok(NULL,",");
@@ -288,8 +288,8 @@ void go_down(void)
     while (tok != NULL) {
       for (i = 0; down_commands[i] && *down_commands[i]; i++)
       {
-        f->log(3, 0, 0, "Running %s\n", down_commands[i]);
-        sprintf(temporary,down_commands[i],tok);
+	sprintf(temporary,down_commands[i],tok);
+        f->log(3, 0, 0, "Running %s\n", temporary);
         system(temporary);
       }
       tok = strtok(NULL,",");
