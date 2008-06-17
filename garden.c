@@ -147,7 +147,7 @@ int plugin_control(struct param_control *data)
 	return PLUGIN_RET_STOP;
     }
 
-    garden_session(s, flag, data->argc > 3 ? data->argv[2] : 0, data->argc > 4 ? data->argv[3] : 0);
+    garden_session(s, flag, data->argc > 2 ? data->argv[2] : 0, data->argc > 3 ? data->argv[3] : 0);
     f->session_changed(session);
 
     data->response = NSCTL_RES_OK;
@@ -202,12 +202,11 @@ int garden_session(sessiont *s, int flag, char *newuser, char *newgarden)
     if (!s) return 0;
     if (!s->opened) return 0;
 
-    if (newgarden == 0)
-	strncpy(s->walled_garden_name,"garden",7);
-
-    if (newgarden == 0) {
+    if (*newgarden == 0) {
+	f->log(4, sess, s->tunnel, "Using default garden");
 	strncpy(s->walled_garden_name,"garden",7);
     } else {
+	f->log(4, sess, s->tunnel, "Using garden of %s", newgarden);
 	strncpy(s->walled_garden_name, newgarden, sizeof(*newgarden));
     }
 
