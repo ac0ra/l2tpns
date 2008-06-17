@@ -202,7 +202,7 @@ int garden_session(sessiont *s, int flag, char *newuser, char *newgarden)
     if (!s) return 0;
     if (!s->opened) return 0;
 
-    if (newgarden == 0) {
+    if (!newgarden) {
 	f->log(4, sess, s->tunnel, "Using default garden");
 	strncpy(s->walled_garden_name,"garden",7);
     } else {
