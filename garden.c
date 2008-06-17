@@ -208,9 +208,9 @@ int garden_session(sessiont *s, int flag, char *newuser)
 	    f->fmtaddr(htonl(s->ip), 0));
 
 	snprintf(cmd, sizeof(cmd),
-                 "/sbin/iptables -t nat -A %s_users -s %s -j garden",
+                 "/sbin/iptables -t nat -A %s_users -s %s -j %s",
                  s->walled_garden_name,
-                 f->fmtaddr(htonl(s->ip), 0));
+                 f->fmtaddr(htonl(s->ip), 0), s->walled_garden_name);
 
 	f->log(3, sess, s->tunnel, "%s\n", cmd);
 	system(cmd);
@@ -245,7 +245,8 @@ int garden_session(sessiont *s, int flag, char *newuser)
 	s->cin_wrap = s->cout_wrap = 0;
 
 	snprintf(cmd, sizeof(cmd),
-	    "iptables -t nat -D garden_users -s %s -j %s",
+	    "iptables -t nat -D %s_users -s %s -j %s",
+             s->walled_garden_name,
              f->fmtaddr(htonl(s->ip), 0),
              s->walled_garden_name);
 
