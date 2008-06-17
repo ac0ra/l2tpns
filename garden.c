@@ -266,6 +266,7 @@ int garden_session(sessiont *s, int flag, char *newuser, char *newgarden)
 	}
 
 	s->walled_garden = 0;
+	strncpy(s->walled_garden_name,"garden",7);
 
 	if (flag != F_CLEANUP)
 	{
