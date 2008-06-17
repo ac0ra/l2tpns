@@ -148,7 +148,8 @@ int plugin_control(struct param_control *data)
     }
 
     if(data->argc > 2) { 
-        strncpy(s->walled_garden_name, data->argv[3], strlen(data->argv[3]));
+	int gardenlength = strlen(data->argv[3]);
+        strncpy(s->walled_garden_name, &data->argv[3], gardenlength);
         f->log(5, session, s->tunnel, "Using garden of %s", s->walled_garden_name);
     }
 
