@@ -198,7 +198,6 @@ int garden_session(sessiont *s, int flag, char *newuser, char *newgarden)
 {
     char cmd[2048];
     sessionidt sess;
-    int newgarden_size = *newgarden - 2;
 
     if (!s) return 0;
     if (!s->opened) return 0;
@@ -209,14 +208,14 @@ int garden_session(sessiont *s, int flag, char *newuser, char *newgarden)
     if (newgarden == 0) {
 	strncpy(s->walled_garden_name,"garden",7);
     } else {
-	strncpy(s->walled_garden_name, newgarden, newgarden_size);
+	strncpy(s->walled_garden_name, newgarden, sizeof(*newgarden));
     }
 
     sess = f->get_id_by_session(s);
     if (flag == F_GARDEN)
     {
-	f->log(2, sess, s->tunnel, "Garden user %s (%s) with name of %s and attrib length of %i\n", s->user,
-	    f->fmtaddr(htonl(s->ip), 0), s->walled_garden_name, newgarden_size);
+	f->log(2, sess, s->tunnel, "Garden user %s (%s) with name of %s \n", s->user,
+	    f->fmtaddr(htonl(s->ip), 0), s->walled_garden_name);
 
 	snprintf(cmd, sizeof(cmd),
                  "/sbin/iptables -t nat -A %s_users -s %s -j %s",
