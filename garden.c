@@ -204,13 +204,11 @@ int garden_session(sessiont *s, int flag, char *newuser, char *newgarden)
 
     sess = f->get_id_by_session(s);
 
-    f->log(4, sess, s->tunnel, "Supplied %s and %s", newuser, newgarden);
-
     if (newgarden == 0) {
-	f->log(4, sess, s->tunnel, "Using default garden");
+	f->log(5, sess, s->tunnel, "Using default garden");
 	strncpy(s->walled_garden_name,"garden",7);
     } else {
-	f->log(4, sess, s->tunnel, "Using garden of %s", newgarden);
+	f->log(5, sess, s->tunnel, "Using garden of %s", newgarden);
 	strncpy(s->walled_garden_name, newgarden, sizeof(*newgarden));
     }
 
