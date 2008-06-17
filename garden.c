@@ -47,7 +47,8 @@ char *down_commands[] = {
 #define F_GARDEN	1
 #define F_CLEANUP	2
 
-int garden_session(sessiont *s, int flag, char *newuser);
+//int garden_session(sessiont *s, int flag, char *newuser);
+int garden_session(sessiont *s, int flag, char *newuser, char *newgarden);
 
 int plugin_post_auth(struct param_post_auth *data)
 {
@@ -71,7 +72,7 @@ int plugin_new_session(struct param_new_session *data)
 	return PLUGIN_RET_OK;	// Slaves don't do walled garden processing.
 
     if (data->s->walled_garden)
-	garden_session(data->s, F_GARDEN, 0);
+	garden_session(data->s, F_GARDEN, 0, 0);
 
     return PLUGIN_RET_OK;
 }
@@ -82,13 +83,13 @@ int plugin_kill_session(struct param_new_session *data)
 	return PLUGIN_RET_OK;	// Slaves don't do walled garden processing.
 
     if (data->s->walled_garden)
-	garden_session(data->s, F_CLEANUP, 0);
+	garden_session(data->s, F_CLEANUP, 0, 0);
 
     return PLUGIN_RET_OK;
 }
 
 char *plugin_control_help[] = {
-    "  garden USER|SID                             Put user into the walled garden",
+    "  garden USER|SID [gardenname]                Put user into the walled garden",
     "  ungarden SID [USER]                         Release session from garden",
     0
 };
@@ -146,7 +147,7 @@ int plugin_control(struct param_control *data)
 	return PLUGIN_RET_STOP;
     }
 
-    garden_session(s, flag, data->argc > 2 ? data->argv[2] : 0);
+    garden_session(s, flag, data->argc > 2 ? data->argv[2] : 0, data->argc > 3 ? data->argv[3] : 0);
     f->session_changed(session);
 
     data->response = NSCTL_RES_OK;
@@ -188,24 +189,34 @@ int plugin_become_master(void)
 int plugin_new_session_master(sessiont *s)
 {	
     if (s->walled_garden)
-	garden_session(s, F_GARDEN, 0);
+	garden_session(s, F_GARDEN, 0, 0);
 
     return PLUGIN_RET_OK;
 }
 
-int garden_session(sessiont *s, int flag, char *newuser)
+int garden_session(sessiont *s, int flag, char *newuser, char *newgarden)
 {
     char cmd[2048];
     sessionidt sess;
+    int newgarden_size = *newgarden - 2;
 
     if (!s) return 0;
     if (!s->opened) return 0;
 
+    if (newgarden == 0)
+	strncpy(s->walled_garden_name,"garden",7);
+
+    if (newgarden == 0) {
+	strncpy(s->walled_garden_name,"garden",7);
+    } else {
+	strncpy(s->walled_garden_name, newgarden, newgarden_size);
+    }
+
     sess = f->get_id_by_session(s);
     if (flag == F_GARDEN)
     {
-	f->log(2, sess, s->tunnel, "Garden user %s (%s)\n", s->user,
-	    f->fmtaddr(htonl(s->ip), 0));
+	f->log(2, sess, s->tunnel, "Garden user %s (%s) with name of %s and attrib length of %i\n", s->user,
+	    f->fmtaddr(htonl(s->ip), 0), s->walled_garden_name, newgarden_size);
 
 	snprintf(cmd, sizeof(cmd),
                  "/sbin/iptables -t nat -A %s_users -s %s -j %s",
