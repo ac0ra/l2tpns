@@ -47,7 +47,6 @@ char *down_commands[] = {
 #define F_GARDEN	1
 #define F_CLEANUP	2
 
-//int garden_session(sessiont *s, int flag, char *newuser);
 int garden_session(sessiont *s, int flag, char *newuser);
 
 int plugin_post_auth(struct param_post_auth *data)
@@ -148,7 +147,8 @@ int plugin_control(struct param_control *data)
     }
 
     if(data->argc > 2) { 
-        strncpy(s->walled_garden_name, data->argv[3], sizeof(data->argv[3]));
+	f->log(5, session, s->tunnel, "Got an input of %s", data->argv[3]);
+        strncpy(s->walled_garden_name, (char *) data->argv[3], sizeof(data->argv[3]));
         f->log(5, session, s->tunnel, "Using garden of %s", s->walled_garden_name);
     }
 
