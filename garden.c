@@ -112,7 +112,7 @@ int plugin_control(struct param_control *data)
 
     flag = data->argv[0][0] == 'g' ? F_GARDEN : F_UNGARDEN;
 
-    if (data->argc < 2 || data->argc > 4 || (data->argc > 2 && flag == F_GARDEN))
+    if (data->argc < 2 || data->argc > 4 || (data->argc > 3 && flag == F_GARDEN))
     {
 	data->response = NSCTL_RES_ERR;
 	data->additional = flag == F_GARDEN
