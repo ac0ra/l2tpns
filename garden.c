@@ -149,7 +149,7 @@ int plugin_control(struct param_control *data)
     if(data->argc > 2) { 
       strncpy(s->walled_garden_name, data->argv[2],MAXGARDEN);
       f->log(5, session, s->tunnel, "Using garden of %s", s->walled_garden_name);
-    } else if (data->argc > 1) {
+    } else if ((data->argc > 1) && flag == F_GARDEN) {
       strncpy(s->walled_garden_name, 'garden',7);
       f->log(5, session, s->tunnel, "Using garden of %s (default)", s->walled_garden_name);
     }
