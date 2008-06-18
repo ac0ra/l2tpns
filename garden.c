@@ -88,7 +88,7 @@ int plugin_kill_session(struct param_new_session *data)
 }
 
 char *plugin_control_help[] = {
-    "  garden USER|SID                             Put user into the walled garden",
+    "  garden USER|SID [gardenname]                Put user into the walled garden",
     "  ungarden SID [USER]                         Release session from garden",
     0
 };
@@ -111,7 +111,7 @@ int plugin_control(struct param_control *data)
 
     flag = data->argv[0][0] == 'g' ? F_GARDEN : F_UNGARDEN;
 
-    if (data->argc < 2 || data->argc > 3 || (data->argc > 2 && flag == F_GARDEN))
+    if (data->argc < 2 || data->argc > 4 || (data->argc > 3 && flag == F_GARDEN))
     {
 	data->response = NSCTL_RES_ERR;
 	data->additional = flag == F_GARDEN
@@ -146,7 +146,15 @@ int plugin_control(struct param_control *data)
 	return PLUGIN_RET_STOP;
     }
 
-    garden_session(s, flag, data->argc > 2 ? data->argv[2] : 0);
+    if(data->argc > 2) { 
+      strncpy(s->walled_garden_name, data->argv[2],MAXGARDEN);
+      f->log(5, session, s->tunnel, "Using garden of %s", s->walled_garden_name);
+    } else if (data->argc > 1) {
+      strncpy(s->walled_garden_name, 'garden',7);
+      f->log(5, session, s->tunnel, "Using garden of %s (default)", s->walled_garden_name);
+    }
+
+    garden_session(s, flag, data->argc > 2 ? data->argv[1] : 0);
     f->session_changed(session);
 
     data->response = NSCTL_RES_OK;
@@ -202,10 +210,12 @@ int garden_session(sessiont *s, int flag, char *newuser)
     if (!s->opened) return 0;
 
     sess = f->get_id_by_session(s);
+
     if (flag == F_GARDEN)
     {
-	f->log(2, sess, s->tunnel, "Garden user %s (%s)\n", s->user,
-	    f->fmtaddr(htonl(s->ip), 0));
+
+	f->log(2, sess, s->tunnel, "Garden user %s (%s) with name of %s \n", s->user,
+	    f->fmtaddr(htonl(s->ip), 0), s->walled_garden_name);
 
 	snprintf(cmd, sizeof(cmd),
                  "/sbin/iptables -t nat -A %s_users -s %s -j %s",
@@ -258,6 +268,7 @@ int garden_session(sessiont *s, int flag, char *newuser)
 	}
 
 	s->walled_garden = 0;
+	strncpy(s->walled_garden_name,"garden",7);
 
 	if (flag != F_CLEANUP)
 	{
