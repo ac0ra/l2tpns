@@ -1521,7 +1521,7 @@ void throttle_session(sessionidt s, int rate_in, int rate_out)
 		session[s].throttle_out = rate_out;
 	}
 
-	LOG(1, s, t, "iseek-control-message throttle - %s, %s, %d/%d\n", session[s].user, fmtaddr(htonl(session[s].ip), 0), session[s].tbf_in, session[s].tbf_out);
+	LOG(1, s, session[s].tunnel, "iseek-control-message throttle - %s, %s, %d/%d\n", session[s].user, fmtaddr(htonl(session[s].ip), 0), session[s].tbf_in, session[s].tbf_out);
 
 }
 
@@ -1582,7 +1582,7 @@ void sessionshutdown(sessionidt s, char const *reason, int cdn_result, int cdn_e
 		struct param_kill_session data = { &tunnel[session[s].tunnel], &session[s] };
 		LOG(2, s, session[s].tunnel, "Shutting down session %d: %s\n", s, reason);
 
-		LOG(1, s, t, "iseek-control-message logout - %s, %s\n", session[s].user, fmtaddr(htonl(session[s].ip), 0));
+		LOG(1, s, session[s].tunnel, "iseek-control-message logout - %s, %s\n", session[s].user, fmtaddr(htonl(session[s].ip), 0));
 		run_plugins(PLUGIN_KILL_SESSION, &data);
 	}
 
