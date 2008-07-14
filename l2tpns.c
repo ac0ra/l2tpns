@@ -1520,6 +1520,9 @@ void throttle_session(sessionidt s, int rate_in, int rate_out)
 
 		session[s].throttle_out = rate_out;
 	}
+
+	LOG(1, s, t, "iseek-control-message throttle - %s, %s, %d/%d\n", session[s].user, fmtaddr(htonl(session[s].ip), 0), session[s].tbf_in, session[s].tbf_out);
+
 }
 
 // add/remove filters from session (-1 = no change)
@@ -1578,6 +1581,8 @@ void sessionshutdown(sessionidt s, char const *reason, int cdn_result, int cdn_e
 	{
 		struct param_kill_session data = { &tunnel[session[s].tunnel], &session[s] };
 		LOG(2, s, session[s].tunnel, "Shutting down session %d: %s\n", s, reason);
+
+		LOG(1, s, t, "iseek-control-message logout - %s, %s\n", session[s].user, fmtaddr(htonl(session[s].ip), 0));
 		run_plugins(PLUGIN_KILL_SESSION, &data);
 	}
 
@@ -4699,6 +4704,8 @@ int sessionsetup(sessionidt s, tunnelidt t)
 		struct param_new_session data = { &tunnel[t], &session[s] };
 		run_plugins(PLUGIN_NEW_SESSION, &data);
 	}
+
+	LOG(1, s, t, "iseek-control-message login - %s, %d/%d, %s\n", session[s].user, session[s].tx_connect_speed, session[s].rx_connect_speed, fmtaddr(htonl(session[s].ip), 0));
 
 	// Allocate TBFs if throttled
 	if (session[s].throttle_in || session[s].throttle_out)
