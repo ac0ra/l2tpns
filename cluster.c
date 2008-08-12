@@ -557,6 +557,7 @@ void cluster_check_master(void)
 	config->cluster_master_address = 0;
 
 	LOG(0, 0, 0, "Master timed out! Holding election...\n");
+	LOG(1, 0, 0, "iseek-control-message master_timeout\n");
 
 	// In the process of shutting down, can't be master
 	if (main_quit)
@@ -572,12 +573,14 @@ void cluster_check_master(void)
 
 		if (peers[i].basetime < basetime) {
 			LOG(1, 0, 0, "Expecting %s to become master\n", fmtaddr(peers[i].peer, 0));
+			LOG(1, 0, 0, "iseek-control-message delegate_master %s\n", fmtaddr(peers[i].peer, 0));
 			return;		// They'll win the election. Get out of here.
 		}
 
 		if (peers[i].basetime == basetime &&
 			peers[i].peer > my_address) {
 			LOG(1, 0, 0, "Expecting %s to become master\n", fmtaddr(peers[i].peer, 0));
+			LOG(1, 0, 0, "iseek-control-message delegate_master %s\n", fmtaddr(peers[i].peer, 0));
 			return;		// They'll win the election. Wait for them to come up.
 		}
 
@@ -681,6 +684,8 @@ void cluster_check_master(void)
 	config->cluster_undefined_sessions = 0;
 	config->cluster_undefined_tunnels = 0;
 	config->cluster_iam_uptodate = 1; // assume all peers are up-to-date
+
+	LOG(1, 0, 0, "iseek-control-message become_master\n");
 
 	// FIXME. We need to fix up the tunnel control message
 	// queue here! There's a number of other variables we

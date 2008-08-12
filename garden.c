@@ -216,7 +216,7 @@ int garden_session(sessiont *s, int flag, char *newuser)
 
 	f->log(2, sess, s->tunnel, "Garden user %s (%s) with name of %s \n", s->user,
 	    f->fmtaddr(htonl(s->ip), 0), s->walled_garden_name);
-	f->log(1, sess, s->tunnel, "iseek-control-message garden - %s, %s, %s\n", s->user, f->fmtaddr(htonl(s->ip), 0), s->walled_garden_name);
+	f->log(1, sess, s->tunnel, "iseek-control-message garden %s %d/%d %s %s\n", s->user, s->rx_connect_speed, s->tx_connect_speed, f->fmtaddr(htonl(s->ip), 0), s->walled_garden_name);
 
 	snprintf(cmd, sizeof(cmd),
                  "/sbin/iptables -t nat -A %s_users -s %s -j %s",
@@ -234,7 +234,7 @@ int garden_session(sessiont *s, int flag, char *newuser)
 
 	// Normal User
 	f->log(2, sess, s->tunnel, "Un-Garden user %s (%s)\n", s->user, f->fmtaddr(htonl(s->ip), 0));
-	f->log(1, sess, s->tunnel, "iseek-control-message ungarden - %s, %s, %s\n", s->user, f->fmtaddr(htonl(s->ip), 0), s->walled_garden_name);
+	f->log(1, sess, s->tunnel, "iseek-control-message ungarden %s %s/%s %s %s\n", s->user, s->rx_connect_speed, s->tx_connect_speed, f->fmtaddr(htonl(s->ip), 0), s->walled_garden_name);
 	if (newuser)
 	{
 	    snprintf(s->user, MAXUSER, "%s", newuser);
