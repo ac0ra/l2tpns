@@ -1521,7 +1521,7 @@ void throttle_session(sessionidt s, int rate_in, int rate_out)
 		session[s].throttle_out = rate_out;
 	}
 
-	LOG(1, s, session[s].tunnel, "iseek-control-message throttle %s %d/%d %s %d/%d\n", session[s].user, session[s].rx_connect_speed, session[s].tx_connect_speed, fmtaddr(htonl(session[s].ip), 0), session[s].tbf_in, session[s].tbf_out);
+	LOG(1, s, session[s].tunnel, "iseek-control-message throttle %s %d/%d %s %d/%d\n", session[s].user, session[s].rx_connect_speed, session[s].tx_connect_speed, fmtaddr(htonl(session[s].ip), 0), session[s].throttle_in, session[s].throttle_out);
 
 }
 
