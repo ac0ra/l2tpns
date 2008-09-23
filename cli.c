@@ -849,10 +849,36 @@ static int cmd_show_version(struct cli_def *cli, char *command, char **argv, int
 	return CLI_OK;
 }
 
+void display_pool(ippoolt ip,int show_all,int *used,int *free)
+{
+        if (!ip.address) return 0;
+        if (ip.assigned)
+        {
+          cli_print(cli, "%-15s\tY %8d %s",
+                    fmtaddr(htonl(ip.address), 0),
+                    ip.session,
+                    session[ip.session].user);
+
+          (*used)++;
+        }
+        else
+        {
+          if (ip.last)
+            cli_print(cli, "%-15s\tN %8s [%s] %ds",
+                      fmtaddr(htonl(ip.address), 0), "",
+                      ip.user, (int) time_now - ip.last);
+
+          else if (show_all)
+            cli_print(cli, "%-15s\tN", fmtaddr(htonl(ip.address), 0));
+          (*free)++;
+        }  
+}
+
 static int cmd_show_pool(struct cli_def *cli, char *command, char **argv, int argc)
 {
 	int i;
 	int used = 0, free = 0, show_all = 0;
+        int x,y;
 
 	if (!config->cluster_iam_master)
 	{
@@ -877,31 +903,17 @@ static int cmd_show_pool(struct cli_def *cli, char *command, char **argv, int ar
 
 	time(&time_now);
 	cli_print(cli, "%-15s %4s %8s %s", "IP Address", "Used", "Session", "User");
-	for (i = 0; i < MAXIPPOOL; i++)
-	{
-		if (!ip_address_pool[i].address) continue;
-		if (ip_address_pool[i].assigned)
-		{
-			cli_print(cli, "%-15s\tY %8d %s",
-				fmtaddr(htonl(ip_address_pool[i].address), 0),
-				ip_address_pool[i].session,
-				session[ip_address_pool[i].session].user);
-
-			used++;
-		}
-		else
-		{
-			if (ip_address_pool[i].last)
-				cli_print(cli, "%-15s\tN %8s [%s] %ds",
-					fmtaddr(htonl(ip_address_pool[i].address), 0), "",
-					ip_address_pool[i].user, (int) time_now - ip_address_pool[i].last);
-
-			else if (show_all)
-				cli_print(cli, "%-15s\tN", fmtaddr(htonl(ip_address_pool[i].address), 0));
-
-			free++;
-		}
-	}
+        for (x = 0; x < 256 ; x++)
+        {
+                for (y = 0; y < 256 ; y++)
+                {
+                        if (ip_address_pool[x][y] == NULL) continue;
+                        for (i = 0; i < MAXIPPOOL; i++)
+                        {
+                          used += display_pool(ip_address_pool[x][y][i],show_all,&used,&free);
+                        }
+                }
+        }
 
 	if (!show_all)
 		cli_print(cli, "(Not displaying unused addresses)");
