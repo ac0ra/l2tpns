@@ -811,7 +811,7 @@ void host_unreachable(in_addr_t destination, uint16_t id, in_addr_t source, uint
 extern tunnelt *tunnel;
 extern sessiont *session;
 extern sessionlocalt *sess_local;
-extern ippoolt ***ip_address_pool;
+extern ippoolt *ip_address_pool[256][256];
 #define sessionfree (session[0].next)
 
 
