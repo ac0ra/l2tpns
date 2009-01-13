@@ -93,7 +93,6 @@ static uint32_t udp_rx = 0, udp_rx_pkt = 0, udp_tx = 0;
 static uint32_t eth_rx = 0, eth_rx_pkt = 0;
 uint32_t eth_tx = 0;
 
-static uint32_t ip_pool_size = 1;	// Size of the pool of addresses used for dynamic address allocation.
 time_t time_now = 0;			// Current time in seconds since epoch.
 static char time_now_string[64] = {0};	// Current time as a string.
 static int time_changed = 0;		// time_now changed
@@ -179,7 +178,17 @@ tunnelt *tunnel = NULL;			// Array of tunnel structures.
 sessiont *session = NULL;		// Array of session structures.
 sessionlocalt *sess_local = NULL;	// Array of local per-session counters.
 radiust *radius = NULL;			// Array of radius structures.
-ippoolt *ip_address_pool = NULL;	// Array of dynamic IP addresses.
+
+// The following are the variables for holding the IP pool.  We use a 256x256 array so we can
+// directly map from the 2 chars of the pool-id to an array index.  Following the conventions 
+// used in l2tpns on initialization we will populate ip_address_pool with NULLs and the 
+// ip_pool_size will be populated with 0's.  A pool that is in use will have a non-zero ip_pool_size
+// and a pointer to an array of ippoolt.
+
+ippoolt *ip_address_pool[256][256];	// Array of dynamic IP addresses.
+
+static uint32_t ip_pool_size[256][256];	// Size of the pool of addresses used for dynamic address allocation.
+
 ip_filtert *ip_filters = NULL;		// Array of named filters.
 static controlt *controlfree = 0;
 struct Tstats *_statistics = NULL;
@@ -205,6 +214,7 @@ static void plugins_done(void);
 static void processcontrol(uint8_t *buf, int len, struct sockaddr_in *addr, int alen, struct in_addr *local);
 static tunnelidt new_tunnel(void);
 static void unhide_value(uint8_t *value, size_t len, uint16_t type, uint8_t *vector, size_t vec_len);
+static void malloc_pool(uint8_t x,uint8_t y);
 
 // on slaves, alow BGP to withdraw cleanly before exiting
 #define QUIT_DELAY	5
@@ -3716,6 +3726,18 @@ static void stripdomain(char *host)
 	}
 }
 
+static void malloc_pool(uint8_t x,uint8_t y) {
+	if (!(ip_address_pool[x][y] = shared_malloc(sizeof(ippoolt) * MAXIPPOOL)))
+	{
+		LOG(0, 0, 0, "Error doing malloc for pool %c%c ip_address_pool: %s\n", 
+                    (x || ' '),
+                    (y || ' '),
+                    strerror(errno));
+		exit(1);
+	}
+        ip_pool_size[x][y] = 1;
+}
+
 // Init data structures
 static void initdata(int optdebug, char *optconfig)
 {
@@ -3779,11 +3801,10 @@ static void initdata(int optdebug, char *optconfig)
 		exit(1);
 	}
 
-	if (!(ip_address_pool = shared_malloc(sizeof(ippoolt) * MAXIPPOOL)))
-	{
-		LOG(0, 0, 0, "Error doing malloc for ip_address_pool: %s\n", strerror(errno));
-		exit(1);
-	}
+        memset(ip_address_pool,(int) NULL,256*256);
+        memset(ip_pool_size,0,256*256);
+
+        malloc_pool(0,0);
 
 	if (!(ip_filters = shared_malloc(sizeof(ip_filtert) * MAXFILTER)))
 	{
@@ -3809,7 +3830,6 @@ static void initdata(int optdebug, char *optconfig)
 	memset(tunnel, 0, sizeof(tunnelt) * MAXTUNNEL);
 	memset(session, 0, sizeof(sessiont) * MAXSESSION);
 	memset(radius, 0, sizeof(radiust) * MAXRADIUS);
-	memset(ip_address_pool, 0, sizeof(ippoolt) * MAXIPPOOL);
 
 		// Put all the sessions on the free list marked as undefined.
 	for (i = 1; i < MAXSESSION; i++)
@@ -3850,25 +3870,40 @@ static int assign_ip_address(sessionidt s)
 	char *u = session[s].user;
 	char reuse = 0;
 
+        uint8_t x = (uint8_t)session[s].pool_id[0];
+        uint8_t y = (uint8_t)session[s].pool_id[1];
+
+        // Get our pool and pool size for the approprate session.  Because sessions are 0 filled
+        // this will default to [0][0]
+
+        ippoolt *pool = ip_address_pool[x][y];
+        int pool_size = ip_pool_size[x][y];
 
 	CSTAT(assign_ip_address);
 
-	for (i = 1; i < ip_pool_size; i++)
+	if (pool == NULL)
 	{
-		if (!ip_address_pool[i].address || ip_address_pool[i].assigned)
+                LOG(0, s, session[s].tunnel, "assign_ip_address(): Uninitialized ip pool %c%c defaulting to default pool\n",(x || ' '),(y || ' '));
+                pool = ip_address_pool[0][0];
+                pool_size = ip_pool_size[0][0];
+	}
+
+	for (i = 1; i < pool_size; i++)
+	{
+		if (!pool[i].address || pool[i].assigned)
 			continue;
 
-		if (!session[s].walled_garden && ip_address_pool[i].user[0] && !strcmp(u, ip_address_pool[i].user))
+		if (!session[s].walled_garden && pool[i].user[0] && !strcmp(u, pool[i].user))
 		{
 			best = i;
 			reuse = 1;
 			break;
 		}
 
-		if (ip_address_pool[i].last < best_time)
+		if (pool[i].last < best_time)
 		{
 			best = i;
-			if (!(best_time = ip_address_pool[i].last))
+			if (!(best_time = pool[i].last))
 				break; // never used, grab this one
 		}
 	}
@@ -3879,18 +3914,18 @@ static int assign_ip_address(sessionidt s)
 		return 0;
 	}
 
-	session[s].ip = ip_address_pool[best].address;
+	session[s].ip = pool[best].address;
 	session[s].ip_pool_index = best;
-	ip_address_pool[best].assigned = 1;
-	ip_address_pool[best].last = time_now;
-	ip_address_pool[best].session = s;
+	pool[best].assigned = 1;
+	pool[best].last = time_now;
+	pool[best].session = s;
 	if (session[s].walled_garden)
 		/* Don't track addresses of users in walled garden (note: this
 		   means that their address isn't "sticky" even if they get
 		   un-gardened). */
-		ip_address_pool[best].user[0] = 0;
+		pool[best].user[0] = 0;
 	else
-		strncpy(ip_address_pool[best].user, u, sizeof(ip_address_pool[best].user) - 1);
+		strncpy(pool[best].user, u, sizeof(pool[best].user) - 1);
 
 	STAT(ip_allocated);
 	LOG(4, s, session[s].tunnel, "assign_ip_address(): %s ip address %d from pool\n",
@@ -3903,6 +3938,10 @@ static void free_ip_address(sessionidt s)
 {
 	int i = session[s].ip_pool_index;
 
+        uint8_t x = (uint8_t)session[s].pool_id[0];
+        uint8_t y = (uint8_t)session[s].pool_id[1];
+
+        ippoolt *pool = ip_address_pool[x][y];
 
 	CSTAT(free_ip_address);
 
@@ -3915,9 +3954,9 @@ static void free_ip_address(sessionidt s)
 	STAT(ip_freed);
 	cache_ipmap(session[s].ip, -i);	// Change the mapping to point back to the ip pool index.
 	session[s].ip = 0;
-	ip_address_pool[i].assigned = 0;
-	ip_address_pool[i].session = 0;
-	ip_address_pool[i].last = time_now;
+	pool[i].assigned = 0;
+	pool[i].session = 0;
+	pool[i].last = time_now;
 }
 
 //
@@ -3929,19 +3968,30 @@ static void free_ip_address(sessionidt s)
 //
 void rebuild_address_pool(void)
 {
+        int x,y;
 	int i;
+
+        ippoolt *pool;
 
 		//
 		// Zero the IP pool allocation, and build
 		// a map from IP address to pool index.
-	for (i = 1; i < MAXIPPOOL; ++i)
-	{
-		ip_address_pool[i].assigned = 0;
-		ip_address_pool[i].session = 0;
-		if (!ip_address_pool[i].address)
-			continue;
+        for (x = 0; x<256 ; x++)
+        {
+                for (y = 0; y<256 ; y++ )
+                {
+                  if (ip_address_pool[x][y] == NULL)
+                    continue;
 
-		cache_ipmap(ip_address_pool[i].address, -i);	// Map pool IP to pool index.
+                  for (i = 1; i < MAXIPPOOL; ++i)
+                    {
+                      ip_address_pool[x][y][i].assigned = 0;
+                      ip_address_pool[x][y][i].session = 0;
+                      if (!ip_address_pool[x][y][i].address)
+			  continue;
+                      cache_ipmap(ip_address_pool[x][y][i].address, -i); // Map pool IP to pool index.
+                    }
+                }
 	}
 
 	for (i = 0; i < MAXSESSION; ++i)
@@ -3973,10 +4023,12 @@ void rebuild_address_pool(void)
 			continue;
 		}
 
-		ip_address_pool[ipid].assigned = 1;
-		ip_address_pool[ipid].session = i;
-		ip_address_pool[ipid].last = time_now;
-		strncpy(ip_address_pool[ipid].user, session[i].user, sizeof(ip_address_pool[ipid].user) - 1);
+                pool = ip_address_pool[(uint)session[i].pool_id[0]][(uint)session[i].pool_id[1]];
+
+		pool[ipid].assigned = 1;
+		pool[ipid].session = i;
+		pool[ipid].last = time_now;
+		strncpy(pool[ipid].user, session[i].user, sizeof(pool[ipid].user) - 1);
 		session[i].ip_pool_index = ipid;
 		cache_ipmap(session[i].ip, i);	// Fix the ip map.
 	}
@@ -3987,34 +4039,41 @@ void rebuild_address_pool(void)
 // (usually when the master sends us an update).
 static void fix_address_pool(int sid)
 {
-	int ipid;
+        int ipid   = session[sid].ip_pool_index;
 
-	ipid = session[sid].ip_pool_index;
+        uint8_t x  = (uint8_t)session[sid].pool_id[0];
+        uint8_t y  = (uint8_t)session[sid].pool_id[1];
 
-	if (ipid > ip_pool_size)
+	if (ipid > ip_pool_size[x][y])
 		return;		// Ignore it. rebuild_address_pool will fix it up.
 
-	if (ip_address_pool[ipid].address != session[sid].ip)
+	if (ip_address_pool[x][y][ipid].address != session[sid].ip)
 		return;		// Just ignore it. rebuild_address_pool will take care of it.
 
-	ip_address_pool[ipid].assigned = 1;
-	ip_address_pool[ipid].session = sid;
-	ip_address_pool[ipid].last = time_now;
-	strncpy(ip_address_pool[ipid].user, session[sid].user, sizeof(ip_address_pool[ipid].user) - 1);
+	ip_address_pool[x][y][ipid].assigned = 1;
+	ip_address_pool[x][y][ipid].session = sid;
+	ip_address_pool[x][y][ipid].last = time_now;
+	strncpy(ip_address_pool[x][y][ipid].user, 
+                session[sid].user, 
+                sizeof(ip_address_pool[x][y][ipid].user) - 1);
 }
 
 //
 // Add a block of addresses to the IP pool to hand out.
 //
-static void add_to_ip_pool(in_addr_t addr, in_addr_t mask)
+static void add_to_ip_pool(in_addr_t addr, in_addr_t mask,uint8_t x,uint8_t y)
 {
 	int i;
+
+        if (ip_address_pool[x][y] == NULL)
+                malloc_pool(x,y);
+
 	if (mask == 0)
 		mask = 0xffffffff;	// Host route only.
 
 	addr &= mask;
 
-	if (ip_pool_size >= MAXIPPOOL)	// Pool is full!
+	if (ip_pool_size[x][y] >= MAXIPPOOL)	// Pool is full!
 		return ;
 
 	for (i = addr ;(i & mask) == addr; ++i)
@@ -4022,10 +4081,10 @@ static void add_to_ip_pool(in_addr_t addr, in_addr_t mask)
 		if ((i & 0xff) == 0 || (i&0xff) == 255)
 			continue;	// Skip 0 and broadcast addresses.
 
-		ip_address_pool[ip_pool_size].address = i;
-		ip_address_pool[ip_pool_size].assigned = 0;
-		++ip_pool_size;
-		if (ip_pool_size >= MAXIPPOOL)
+		ip_address_pool[x][y][ip_pool_size[x][y]].address  = i;
+		ip_address_pool[x][y][ip_pool_size[x][y]].assigned = 0;
+		++ip_pool_size[x][y];
+		if (ip_pool_size[x][y] >= MAXIPPOOL)
 		{
 			LOG(0, 0, 0, "Overflowed IP pool adding %s\n", fmtaddr(htonl(addr), 0));
 			return;
@@ -4034,26 +4093,49 @@ static void add_to_ip_pool(in_addr_t addr, in_addr_t mask)
 }
 
 // Initialize the IP address pool
-static void initippool()
+static void initippool(uint8_t x,uint8_t y)
 {
 	FILE *f;
 	char *p;
 	char buf[4096];
-	memset(ip_address_pool, 0, sizeof(ip_address_pool));
+        char filename[FILENAME_MAX];
 
-	if (!(f = fopen(IPPOOLFILE, "r")))
+        if (ip_address_pool[x][y] == NULL) 
+        	malloc_pool(x,y);
+
+	memset(ip_address_pool[x][y], 0, sizeof(ip_address_pool[x][y]));
+
+        if (x && y) 
+        {
+        	snprintf(filename,sizeof(filename)-1,"%s.%c%c",IPPOOLFILE,x,y);
+        }
+        else 
+        {
+        	strncpy(filename,IPPOOLFILE,sizeof(filename)-1);
+        }
+
+	if (!(f = fopen(filename, "r")))
 	{
-		LOG(0, 0, 0, "Can't load pool file " IPPOOLFILE ": %s\n", strerror(errno));
-		exit(1);
+          if (x && y)
+            return;  // Skip non existant default pools.
+
+          LOG(0, 0, 0, "Can't load pool file " IPPOOLFILE ": %s\n", strerror(errno));
+          exit(1);
 	}
 
-	while (ip_pool_size < MAXIPPOOL && fgets(buf, 4096, f))
+        // Why does this work? There is no reason why each line has to be 4096 bytes long
+        // so why does the code assume that if we suck in a block of code that starts with a
+        // # we can safely ignore it?
+
+	while (ip_pool_size[x][y] < MAXIPPOOL && fgets(buf, 4096, f))
 	{
 		char *pool = buf;
 		buf[4095] = 0;	// Force it to be zero terminated/
 
 		if (*buf == '#' || *buf == '\n')
 			continue; // Skip comments / blank lines
+
+                // Remove anything following the last newline.
 		if ((p = (char *)strrchr(buf, '\n'))) *p = 0;
 		if ((p = (char *)strchr(buf, ':')))
 		{
@@ -4093,16 +4175,16 @@ static void initippool()
 
 			routeset(0, start, mask, 0, 1);
 
-			add_to_ip_pool(start, mask);
+			add_to_ip_pool(start, mask,x,y);
 		}
 		else
 		{
 			// It's a single ip address
-			add_to_ip_pool(ntohl(inet_addr(pool)), 0);
+                  add_to_ip_pool(ntohl(inet_addr(pool)), 0,x,y);
 		}
 	}
 	fclose(f);
-	LOG(1, 0, 0, "IP address pool is %d addresses\n", ip_pool_size - 1);
+	LOG(1, 0, 0, "IP address pool is %d addresses\n", (ip_pool_size[x][y] - 1));
 }
 
 void snoop_send_packet(uint8_t *packet, uint16_t size, in_addr_t destination, uint16_t port)
@@ -4201,6 +4283,7 @@ int main(int argc, char *argv[])
 	int i;
 	int optdebug = 0;
 	char *optconfig = CONFIGFILE;
+        int x,y;
 
 	time(&basetime);             // start clock
 
@@ -4298,7 +4381,12 @@ int main(int argc, char *argv[])
 
 	initudp();
 	initrad();
-	initippool();
+
+        for (x = 0; x<256;x++) {
+          for (y = 0; y<256;y++) {
+            initippool(x,y);
+          }
+        }
 
 	// seed prng
 	{

@@ -270,7 +270,7 @@ int garden_session(sessiont *s, int flag, char *newuser)
 	}
 
 	s->walled_garden = 0;
-	strncpy(s->walled_garden_name,"garden",7);
+	memset(s->walled_garden_name,0,sizeof(s->walled_garden_name));
 
 	if (flag != F_CLEANUP)
 	{

@@ -586,6 +586,18 @@ void processrad(uint8_t *buf, int len, char socket_index)
 						int attrib_length = *(p + 7) - 2;
 
 						LOG(4, s, session[s].tunnel, "   Radius reply contains Vendor-Specific.  Vendor=%u Attrib=%u Length=%d\n", vendor, attrib, attrib_length);
+
+// My reading of the code suggest that the packet looks something like this at this point
+// 0123456789ABCDEF
+// SNVVVVALCCCCC....
+// 
+// S == 26
+// N == Total length of this chunk
+// V == Vender id
+// A == Attrib id
+// L == Length of the attribute
+// C == Content
+
 						if (vendor == 9 && attrib == 1) // Cisco-AVPair
 						{
 							if (attrib_length < 0) continue;
@@ -614,16 +626,6 @@ void processrad(uint8_t *buf, int len, char socket_index)
                                                 else if (vendor == 1337 && attrib == 2) 
                                                 {
                                                         int walled_garden_name_size = MAXGARDEN;
-// My reading of the code suggest that the packet looks something like this at this point
-// 0123456789ABCDEF
-// SNVVVVALCCCCC....
-// 
-// S == 26
-// N == Total length of this chunk
-// V == Vender id
-// A == Attrib id
-// L == Length of the attribute
-// C == Content
                                                         if (attrib_length < MAXGARDEN) 
                                                         {
                                                           walled_garden_name_size = attrib_length;
@@ -640,7 +642,13 @@ void processrad(uint8_t *buf, int len, char socket_index)
                                                                 (char *) (p+8),
                                                                 walled_garden_name_size);
                                                         LOG(3, s, session[s].tunnel, "Custom walled garden '%s' for session\n",session[s].walled_garden_name);
-						} 
+						}
+                                                else if (vendor == 1337 && attrib ==3)
+                                                {
+                                                        session[s].pool_id[0] = (char) *(p+8);
+                                                        session[s].pool_id[1] = (char) *(p+9);
+                                                        LOG(3, s, session[s].tunnel, "Alternate pool %c%c for session\n",session[s].pool_id[0],session[s].pool_id[1]);
+                                                }
 						else
 						{
 							LOG(3, s, session[s].tunnel, "      Unknown vendor-specific\n");

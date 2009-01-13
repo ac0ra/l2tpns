@@ -281,7 +281,8 @@ typedef struct
         char  walled_garden_name[MAXGARDEN];       // name of the walled garden this user is in
 	uint8_t ipv6prefixlen;		// IPv6 route prefix length
 	struct in6_addr ipv6route;	// Static IPv6 route
-	char reserved_3[11];		// Space to expand structure without changing HB_VERSION
+        char pool_id[2];                // IP pool that we use for this
+	char reserved_3[9];		// Space to expand structure without changing HB_VERSION
 }
 sessiont;
 
@@ -811,7 +812,7 @@ void host_unreachable(in_addr_t destination, uint16_t id, in_addr_t source, uint
 extern tunnelt *tunnel;
 extern sessiont *session;
 extern sessionlocalt *sess_local;
-extern ippoolt *ip_address_pool;
+extern ippoolt *ip_address_pool[256][256];
 #define sessionfree (session[0].next)
 
 

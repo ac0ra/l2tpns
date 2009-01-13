@@ -6,7 +6,7 @@ man5dir = /usr/share/man/man5
 man8dir = /usr/share/man/man8
 statedir = /var/lib/l2tpns
 
-DEFINES =
+DEFINES =  
 DEFINES += -DLIBDIR='"$(libdir)"'
 DEFINES += -DETCDIR='"$(etcdir)"'
 
@@ -18,7 +18,7 @@ CC = gcc
 LD = gcc
 INCLUDES = -I.
 CPPFLAGS = $(INCLUDES) $(DEFINES)
-CFLAGS = -Wall -Wformat-security -Wno-format-zero-length $(OPTIM)
+CFLAGS = -Wall -Wformat-security -Wno-format-zero-length $(OPTIM) -ggdb
 LDFLAGS =
 LDLIBS =
 INSTALL = install -c -D -o root -g root
