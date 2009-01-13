@@ -29,6 +29,7 @@ char const *cvs_id_l2tpns = "$Id: l2tpns.c,v 1.161.2.1 2006/06/22 15:30:50 bodea
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/types.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <linux/if.h>
@@ -3980,17 +3981,17 @@ void rebuild_address_pool(void)
         {
                 for (y = 0; y<256 ; y++ )
                 {
-                  if (ip_address_pool[x][y] == NULL)
-                    continue;
+                        if (ip_address_pool[x][y] == NULL)
+                                continue;
 
-                  for (i = 1; i < MAXIPPOOL; ++i)
-                    {
-                      ip_address_pool[x][y][i].assigned = 0;
-                      ip_address_pool[x][y][i].session = 0;
-                      if (!ip_address_pool[x][y][i].address)
-			  continue;
-                      cache_ipmap(ip_address_pool[x][y][i].address, -i); // Map pool IP to pool index.
-                    }
+                        for (i = 1; i < MAXIPPOOL; ++i)
+                        {
+                                ip_address_pool[x][y][i].assigned = 0;
+                                ip_address_pool[x][y][i].session = 0;
+                                if (!ip_address_pool[x][y][i].address)
+                                        continue;
+                                cache_ipmap(ip_address_pool[x][y][i].address, -i); // Map pool IP to pool index.
+                        }
                 }
 	}
 
@@ -4099,29 +4100,36 @@ static void initippool(uint8_t x,uint8_t y)
 	char *p;
 	char buf[4096];
         char filename[FILENAME_MAX];
+        int  err;
 
-        if (ip_address_pool[x][y] == NULL) 
-        	malloc_pool(x,y);
-
-	memset(ip_address_pool[x][y], 0, sizeof(ip_address_pool[x][y]));
+        struct stat st;
 
         if (x && y) 
         {
         	snprintf(filename,sizeof(filename)-1,"%s.%c%c",IPPOOLFILE,x,y);
         }
-        else 
+        else if (!x && !y)
         {
         	strncpy(filename,IPPOOLFILE,sizeof(filename)-1);
+        }
+        else
+        {
+                return;
         }
 
 	if (!(f = fopen(filename, "r")))
 	{
-          if (x && y)
-            return;  // Skip non existant default pools.
 
-          LOG(0, 0, 0, "Can't load pool file " IPPOOLFILE ": %s\n", strerror(errno));
-          exit(1);
+         // I'm commenting out this log line for fear of spamming the log with
+         // non errros (with strange chars) everytime it loads up.
+         //LOG(0, 0, 0, "Can't load pool file %s: %s\n", filename,strerror(errno));
+          return;
 	}
+
+	memset(ip_address_pool[x][y], 0, sizeof(ip_address_pool[x][y]));
+
+        if (ip_address_pool[x][y] == NULL) 
+        	malloc_pool(x,y);
 
         // Why does this work? There is no reason why each line has to be 4096 bytes long
         // so why does the code assume that if we suck in a block of code that starts with a
