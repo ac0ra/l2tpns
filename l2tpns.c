@@ -4102,8 +4102,6 @@ static void initippool(uint8_t x,uint8_t y)
         char filename[FILENAME_MAX];
         int  err;
 
-        struct stat st;
-
         if (x && y) 
         {
         	snprintf(filename,sizeof(filename)-1,"%s.%c%c",IPPOOLFILE,x,y);
@@ -4126,10 +4124,11 @@ static void initippool(uint8_t x,uint8_t y)
           return;
 	}
 
-	memset(ip_address_pool[x][y], 0, sizeof(ip_address_pool[x][y]));
-
         if (ip_address_pool[x][y] == NULL) 
         	malloc_pool(x,y);
+
+	memset(ip_address_pool[x][y], 0, sizeof(ip_address_pool[x][y]));
+
 
         // Why does this work? There is no reason why each line has to be 4096 bytes long
         // so why does the code assume that if we suck in a block of code that starts with a
