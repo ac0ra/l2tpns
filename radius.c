@@ -639,7 +639,7 @@ void processrad(uint8_t *buf, int len, char socket_index)
                                                         // walled_garden_name
                                                         session[s].walled_garden = 1;
 							//We zero out memory before setting the name to prevent leakage
-                                                        memset(s->walled_garden_name,0,sizeof(s->walled_garden_name));
+                                                        memset(session[s].walled_garden_name,0,sizeof(session[s].walled_garden_name));
 							strncpy(session[s].walled_garden_name,
                                                                 (char *) (p+8),
                                                                 walled_garden_name_size);
