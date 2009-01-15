@@ -263,7 +263,6 @@ typedef struct
 	uint16_t mru;			// maximum receive unit
 	clockt opened;			// when started
 	clockt die;			// being closed, when to finally free
-        clockt last_dump;               // last time that dump_session was called in this session.
 	time_t last_packet;		// Last packet from the user (used for idle timeouts)
 	in_addr_t dns1, dns2;		// DNS servers
 	routet route[MAXROUTE];		// static routes
@@ -283,7 +282,8 @@ typedef struct
 	uint8_t ipv6prefixlen;		// IPv6 route prefix length
 	struct in6_addr ipv6route;	// Static IPv6 route
         char pool_id[2];                // IP pool that we use for this
-	char reserved_3[9];		// Space to expand structure without changing HB_VERSION
+        clockt last_dump;               // last time that dump_session was called in this session.
+	char reserved_3[11];		// Space to expand structure without changing HB_VERSION
 }
 sessiont;
 
