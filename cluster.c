@@ -1342,11 +1342,11 @@ static int cluster_process_heartbeat(uint8_t *data, int size, int more, uint8_t 
 	int i, type;
 	int hb_ver = more;
 
-#if HB_VERSION != 6
+#if HB_VERSION != 7
 # error "need to update cluster_process_heartbeat()"
 #endif
 
-	// we handle versions 3 through 6
+	// we handle versions 3 through 7
 	if (hb_ver < 3 || hb_ver > HB_VERSION) {
 		LOG(0, 0, 0, "Received a heartbeat version that I don't support (%d)!\n", hb_ver);
 		return -1; // Ignore it??

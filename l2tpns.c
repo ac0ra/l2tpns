@@ -4218,12 +4218,12 @@ static int dump_session(FILE **f, sessiont *s)
 {
 	if (!s->opened || !s->ip || !(s->cin_delta || s->cout_delta) || !*s->user || s->walled_garden)
 		return 1;
+        time_t now = time(NULL);
 
 	if (!*f)
 	{
 		char filename[1024];
 		char timestr[64];
-		time_t now = time(NULL);
 
 		strftime(timestr, sizeof(timestr), "%Y%m%d%H%M%S", localtime(&now));
 		snprintf(filename, sizeof(filename), "%s/%s", config->accounting_dir, timestr);
@@ -4248,14 +4248,21 @@ static int dump_session(FILE **f, sessiont *s)
 	}
 
 	LOG(4, 0, 0, "Dumping accounting information for %s\n", s->user);
-	fprintf(*f, "%s %s %d %u %u\n",
+
+        // The memory is zero filled on initalization so this is safe.
+        if (!s->last_dump)
+                s->last_dump = s->opened;
+
+	fprintf(*f, "%s %s %d %u %u %u\n",
 		s->user,						// username
 		fmtaddr(htonl(s->ip), 0),				// ip
 		(s->throttle_in || s->throttle_out) ? 2 : 1,		// qos
 		(uint32_t) s->cin_delta,				// uptxoctets
-		(uint32_t) s->cout_delta);				// downrxoctets
-
+		(uint32_t) s->cout_delta,				// downrxoctets
+                (uint32_t) (now - s->last_dump));                       // time_used
 	s->cin_delta = s->cout_delta = 0;
+
+        s->last_dump = now;
 
 	return 1;
 }

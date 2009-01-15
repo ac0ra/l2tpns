@@ -263,6 +263,7 @@ typedef struct
 	uint16_t mru;			// maximum receive unit
 	clockt opened;			// when started
 	clockt die;			// being closed, when to finally free
+        clockt last_dump;               // last time that dump_session was called in this session.
 	time_t last_packet;		// Last packet from the user (used for idle timeouts)
 	in_addr_t dns1, dns2;		// DNS servers
 	routet route[MAXROUTE];		// static routes
