@@ -4216,8 +4216,6 @@ void snoop_send_packet(uint8_t *packet, uint16_t size, in_addr_t destination, ui
 
 static int dump_session(FILE **f, sessiont *s)
 {
-	LOG(4, 0, 0, "Dumping session params for dump session: \n IP %d \n cinDelta %u \n coutdelta %u \n username %s \n walledGardenFlag %hx \n", s->ip, s->cin_delta, s->cout_delta, s->user, s->walled_garden);
-	
 	if (!s->opened || !s->ip || !(s->cin_delta || s->cout_delta) || !*s->user || s->walled_garden)
 		return 1;
         time_t now = time(NULL);
