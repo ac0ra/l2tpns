@@ -2839,7 +2839,7 @@ static void regular_cleanups(double period)
 	else if (s_slice > config->cluster_highest_sessionid)
 	    s_slice = config->cluster_highest_sessionid;
 
-	LOG(4, 0, 0, "Begin regular cleanup (last %f seconds ago)\n", period);
+	LOG(6, 0, 0, "Begin regular cleanup (last %f seconds ago)\n", period);
 
 	for (i = 0; i < t_slice; i++)
 	{
@@ -3172,7 +3172,7 @@ static void regular_cleanups(double period)
 		}
 	}
 
-	LOG(4, 0, 0, "End regular cleanup: checked %d/%d/%d tunnels/radius/sessions; %d/%d/%d actions\n",
+	LOG(6, 0, 0, "End regular cleanup: checked %d/%d/%d tunnels/radius/sessions; %d/%d/%d actions\n",
 		t_slice, r_slice, s_slice, t_actions, r_actions, s_actions);
 }
 
