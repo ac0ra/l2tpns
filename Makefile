@@ -41,6 +41,10 @@ ifneq (2.4, $(shell uname -r | perl -pe 's/^(\d+\.\d+).*/$$1/'))
  DEFINES += -DHAVE_EPOLL
 endif
 
+ifdef ISEEK_CONTROL_MESSAGE
+ DEFINES += -DISEEK_CONTROL_MESSAGE
+endif
+
 DEFINES += -DBGP
 OBJS += bgp.o
 

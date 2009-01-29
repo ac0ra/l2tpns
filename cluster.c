@@ -557,7 +557,9 @@ void cluster_check_master(void)
 	config->cluster_master_address = 0;
 
 	LOG(0, 0, 0, "Master timed out! Holding election...\n");
+	#ifdef ISEEK_CONTROL_MESSAGE
 	LOG(1, 0, 0, "iseek-control-message master_timeout\n");
+	#endif
 
 	// In the process of shutting down, can't be master
 	if (main_quit)
