@@ -1,8 +1,8 @@
 # SVN Particulars
-%define svn_url "http://dev.iseek.com.au/development/internal/software/l2tpns"
+%define svn_url "http://build.dev.iseek.com.au/development/internal/software/l2tpns/trunk"
 
 # SVN Version
-%define svn_revision 221
+%define svn_revision 1804
 
 # Release counter
 %define rpm_release 1
@@ -14,12 +14,12 @@ Version: 2.1.21
 Release: %svn_revision.%rpm_release
 License: GPL
 Group: System Environment/Daemons
-Source: http://optusnet.dl.sourceforge.net/sourceforge/l2tpns/l2tpns-%{version}.tar.gz
+source: http://optusnet.dl.sourceforge.net/sourceforge/l2tpns/l2tpns-%{version}.tar.gz
 URL: http://sourceforge.net/projects/l2tpns
 BuildRoot: %{_tmppath}/%{name}-%{svn_revision}-root
 Prereq: /sbin/chkconfig
-BuildRequires: libcli >= 1.8.5
-Requires: libcli >= 1.8.5
+BuildRequires: libcli >= 1.8.5, subversion, libcli-devel
+Requires: libcli >= 1.8.5, subversion
 
 %description
 l2tpns is a layer 2 tunneling protocol network server (LNS).  It
@@ -38,7 +38,7 @@ svn -r %{svn_revision} export %{svn_url} %{buildroot}-svn/l2tpns
 
 %build
 cd %{buildroot}-svn/l2tpns
-make
+make ISEEK_CONTROL_MESSAGE=1
 
 %install
 rm -rf %{buildroot}
@@ -62,6 +62,10 @@ rm -rf %{buildroot}-svn
 %attr(644,root,root) /usr/share/man/man[58]/*
 
 %changelog
+* Thu May  8 2008 Stuart Low <stuart@iseek.com.au> 2.1.21-1.959
+- Rebuild for VMA dynamic preps
+- Includes minor bug fixes & log level changes
+
 * Wed Jun 13 2007 Robert McLeay <robert@iseek.com.au> 2.1.21-1
 - Reroll with new tarball + iseek patches
 * Fri Aug 4 2006 Stuart Low <stuart@iseek.com.au> 2.1.20-1
