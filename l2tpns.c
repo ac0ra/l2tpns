@@ -4246,7 +4246,7 @@ static int dump_session(FILE **f, sessiont *s)
 			"# endpoint: %s\n"
 			"# time: %ld\n"
 			"# uptime: %ld\n"
-			"# format: username ip qos uptxoctets downrxoctets\n",
+			"# format: username ip qos uptxoctets downrxoctets usage_interval\n",
 			hostname,
 			fmtaddr(config->bind_address ? config->bind_address : my_address, 0),
 			now,
