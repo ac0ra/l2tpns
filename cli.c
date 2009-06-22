@@ -444,6 +444,13 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
                         {
                           cli_print(cli, "\tWalled Garden Name:\t%s", session[s].walled_garden_name);
                         }
+			if (session[s].pool_id[0] != 0 && session[s].pool_id[1] != 0)
+			{
+                          cli_print(cli, "\tIP Pool:\tDefault", session[s].walled_garden_name);
+			} else
+			{
+			  cli_print(cli, "\tIP Pool:\t%c%c", session[s].pool_id[0], session[s].pool_id[1]);
+			}
 			{
 				int t = (session[s].throttle_in || session[s].throttle_out);
 				cli_print(cli, "\tThrottled:\t%s%s%.0d%s%s%.0d%s%s",
