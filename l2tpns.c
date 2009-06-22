@@ -3939,8 +3939,8 @@ static int assign_ip_address(sessionidt s)
 		strncpy(pool[best].user, u, sizeof(pool[best].user) - 1);
 
 	STAT(ip_allocated);
-	LOG(4, s, session[s].tunnel, "assign_ip_address(): %s ip address %d from pool\n",
-		reuse ? "Reusing" : "Allocating", best);
+	LOG(4, s, session[s].tunnel, "assign_ip_address(): %s ip address %d from pool %c%c\n",
+		reuse ? "Reusing" : "Allocating", best, (x || ' '), (y || ' '));
 
 	return 1;
 }
