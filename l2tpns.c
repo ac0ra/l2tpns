@@ -3886,6 +3886,12 @@ static int assign_ip_address(sessionidt s)
 
 	CSTAT(assign_ip_address);
 
+	/*
+	 * By adding them to the default pool, we need to test at lines 3967 to make sure
+	 * that we're not going to deref a null pointer.
+	 * If the lines have changed, search for "Uninitialized ip pool".
+	 * Fixed 2009-06-22 by Rob
+	 */
 	if (pool == NULL)
 	{
                 LOG(0, s, session[s].tunnel, "assign_ip_address(): Uninitialized ip pool %c%c defaulting to default pool\n",(x || ' '),(y || ' '));
@@ -3959,6 +3965,17 @@ static void free_ip_address(sessionidt s)
 	STAT(ip_freed);
 	cache_ipmap(session[s].ip, -i);	// Change the mapping to point back to the ip pool index.
 	session[s].ip = 0;
+
+	/* 
+	 * This causes a crash in the case of assigning to the default pool.
+	 * If you change the behaviour here, you'll need to change it at line 3889
+	 * If the lines have changed, search for "Uninitialized ip pool".
+	 * Fixed 2009-06-22 by Rob
+	 */	
+	if (pool == NULL) {
+		//Then we've added them to the default pool
+		pool = ip_address_pool[0][0];
+	}
 	pool[i].assigned = 0;
 	pool[i].session = 0;
 	pool[i].last = time_now;
@@ -4104,7 +4121,6 @@ static void initippool(uint8_t x,uint8_t y)
 	char *p;
 	char buf[4096];
         char filename[FILENAME_MAX];
-        int  err;
 
         if (x && y) 
         {
