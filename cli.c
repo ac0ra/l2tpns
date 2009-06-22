@@ -890,7 +890,7 @@ void display_pool(ippoolt ip,int show_all,int *used,int *free)
 static int cmd_show_pool(struct cli_def *cli, char *command, char **argv, int argc)
 {
 	int i;
-	int used = 0, free = 0, show_all = 0;
+	int used = 0, free = 0, show_all = 0, show_summary = 0;
         int x,y;
 
 	if (!config->cluster_iam_master)
@@ -908,14 +908,26 @@ static int cmd_show_pool(struct cli_def *cli, char *command, char **argv, int ar
 
 		return cli_arg_help(cli, 1,
 			"all", "Show all pool addresses, including unused",
+			"summary", "Show all pool ranges, including unused identified by code",
 			NULL);
 	}
 
 	if (argc > 0 && strcmp(argv[0], "all") == 0)
 		show_all = 1;
+	
+	if (argc > 0 && strcmp(argv[0], "summary") == 0)
+		show_summary = 1;
+
 
 	time(&time_now);
-	cli_print(cli, "%-15s %4s %8s %s", "IP Address", "Used", "Session", "User");
+	if (show_summary)
+	{
+		cli_print(cli, "%-15s %4s %8s %s", "IP Address", "Used", "Session", "User");
+	}
+	else
+	{
+		cli_print(cli,"%-31s %9s", "IP Address Range", "Pool Name");
+	}
         for (x = 0; x < 256 ; x++)
         {
                 for (y = 0; y < 256 ; y++)
@@ -923,8 +935,22 @@ static int cmd_show_pool(struct cli_def *cli, char *command, char **argv, int ar
                         if (ip_address_pool[x][y] == NULL) continue;
                         for (i = 0; i < MAXIPPOOL; i++)
                         {
-                          display_pool(ip_address_pool[x][y][i],show_all,&used,&free);
+				if (show_summary)
+				{
+                          		display_pool(ip_address_pool[x][y][i],show_all,&used,&free);
+				} 
+				else
+				{
+					if (!ip_address_pool[x][y][i].address)
+					{
+						cli_print(cli, "%-15s-%-15s %c%c", fmtaddr(htonl(ip_address_pool[x][y][0].address),0),
+										   fmtaddr(htonl(ip_address_pool[x][y][i-1].address),0),
+										   x,y);
+						continue;
+					}
+				}
                         }
+
                 }
         }
 
