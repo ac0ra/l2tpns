@@ -21,7 +21,7 @@ CPPFLAGS = $(INCLUDES) $(DEFINES)
 CFLAGS = -Wall -Wformat-security -Wno-format-zero-length $(OPTIM) -ggdb
 LDFLAGS =
 LDLIBS =
-INSTALL = install -c -D -o root -g root
+INSTALL = install -c -D
 
 l2tpns.LIBS = -lm -lcli -ldl
 
