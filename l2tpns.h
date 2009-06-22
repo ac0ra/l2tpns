@@ -781,6 +781,7 @@ int ip_filter(uint8_t *buf, int len, uint8_t filter);
 int cmd_show_ipcache(struct cli_def *cli, char *command, char **argv, int argc);
 int cmd_show_hist_idle(struct cli_def *cli, char *command, char **argv, int argc);
 int cmd_show_hist_open(struct cli_def *cli, char *command, char **argv, int argc);
+void initippool(uint8_t x,uint8_t y);
 
 #undef LOG
 #undef LOG_HEX

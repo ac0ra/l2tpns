@@ -97,6 +97,7 @@ static int cmd_debug(struct cli_def *cli, char *command, char **argv, int argc);
 static int cmd_no_debug(struct cli_def *cli, char *command, char **argv, int argc);
 static int cmd_set(struct cli_def *cli, char *command, char **argv, int argc);
 static int cmd_load_plugin(struct cli_def *cli, char *command, char **argv, int argc);
+static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int argc);
 static int cmd_remove_plugin(struct cli_def *cli, char *command, char **argv, int argc);
 static int cmd_uptime(struct cli_def *cli, char *command, char **argv, int argc);
 
@@ -219,6 +220,7 @@ void init_cli(char *hostname)
 
 	c = cli_register_command(cli, NULL, "load", NULL, PRIVILEGE_PRIVILEGED, MODE_CONFIG, NULL);
 	cli_register_command(cli, c, "plugin", cmd_load_plugin, PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Load a plugin");
+	cli_register_command(cli, c, "ip-pool", cmd_load_ip_pool, PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Load an IP-Pool");
 
 	c = cli_register_command(cli, NULL, "remove", NULL, PRIVILEGE_PRIVILEGED, MODE_CONFIG, NULL);
 	cli_register_command(cli, c, "plugin", cmd_remove_plugin, PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Remove a plugin");
@@ -1772,6 +1774,41 @@ static int cmd_remove_plugin(struct cli_def *cli, char *command, char **argv, in
 	cli_error(cli, "Plugin is not loaded");
 	return CLI_OK;
 }
+
+static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int argc)
+{
+	uint8_t x,y = 0;
+
+	if (CLI_HELP_REQUESTED)
+		return cli_arg_help(cli, argc > 1,
+			"IP-POOL", "Name of IP pool to load", NULL);
+
+	if (argc != 1)
+	{
+		cli_error(cli, "Specify an IP pool to load");
+		return CLI_OK;
+	}
+
+	x = argv[0][0];
+	y = argv[0][1];
+
+	if (ip_address_pool[x][y] != 0)
+	{
+		cli_error(cli, "IP Pool %c%c is already loaded", x, y);
+		return CLI_OK;
+	}
+
+	initippool(x,y);
+
+	if (ip_address_pool[x][y] == NULL)
+	{
+		cli_error(cli, "Unable to load IP Pool %c%c. Check that it exists on the filesystem.", x, y);
+		return CLI_OK;
+	}
+	return CLI_OK;
+}
+
+
 
 static char *duration(time_t secs)
 {

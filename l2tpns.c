@@ -45,7 +45,7 @@ char const *cvs_id_l2tpns = "$Id: l2tpns.c,v 1.161.2.1 2006/06/22 15:30:50 bodea
 #include "l2tpns.h"
 #include "cluster.h"
 #include "plugin.h"
-#include "ll.h"
+#include "ll.h"session[s].pool_id[0],session[s].pool_id[1]
 #include "constants.h"
 #include "control.h"
 #include "util.h"
@@ -3889,7 +3889,7 @@ static int assign_ip_address(sessionidt s)
 	/*
 	 * By adding them to the default pool, we need to test at lines 3967 to make sure
 	 * that we're not going to deref a null pointer.
-	 * If the lines have changed, search for "Uninitialized ip pool".
+	 * If the lines have changed, search for "uint8_t Uninitialized ip pool".
 	 * Fixed 2009-06-22 by Rob
 	 */
 	if (pool == NULL)
@@ -4116,7 +4116,7 @@ static void add_to_ip_pool(in_addr_t addr, in_addr_t mask,uint8_t x,uint8_t y)
 }
 
 // Initialize the IP address pool
-static void initippool(uint8_t x,uint8_t y)
+void initippool(uint8_t x,uint8_t y)
 {
 	FILE *f;
 	char *p;
