@@ -922,11 +922,11 @@ static int cmd_show_pool(struct cli_def *cli, char *command, char **argv, int ar
 	time(&time_now);
 	if (show_summary)
 	{
-		cli_print(cli, "%-15s %4s %8s %s", "IP Address", "Used", "Session", "User");
+		cli_print(cli,"%-31s %9s", "IP Address Range", "Pool Name");
 	}
 	else
 	{
-		cli_print(cli,"%-31s %9s", "IP Address Range", "Pool Name");
+		cli_print(cli, "%-15s %4s %8s %s", "IP Address", "Used", "Session", "User");
 	}
         for (x = 0; x < 256 ; x++)
         {
@@ -935,19 +935,18 @@ static int cmd_show_pool(struct cli_def *cli, char *command, char **argv, int ar
                         if (ip_address_pool[x][y] == NULL) continue;
                         for (i = 0; i < MAXIPPOOL; i++)
                         {
-				if (show_summary)
+				if (show_summary && i > 0)
 				{
-                          		display_pool(ip_address_pool[x][y][i],show_all,&used,&free);
+					if (!ip_address_pool[x][y][i].address && ip_address_pool[x][y][i-1].address)
+					{
+						cli_print(cli, "%s-%-15s %c%c", fmtaddr(htonl(ip_address_pool[x][y][1].address),0),
+										   fmtaddr(htonl(ip_address_pool[x][y][i-1].address),1),
+										   x,y);
+					}
 				} 
 				else
 				{
-					if (!ip_address_pool[x][y][i].address)
-					{
-						cli_print(cli, "%-15s-%-15s %c%c", fmtaddr(htonl(ip_address_pool[x][y][0].address),0),
-										   fmtaddr(htonl(ip_address_pool[x][y][i-1].address),0),
-										   x,y);
-						continue;
-					}
+                          		display_pool(ip_address_pool[x][y][i],show_all,&used,&free);
 				}
                         }
 
