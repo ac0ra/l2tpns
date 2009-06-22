@@ -922,7 +922,7 @@ static int cmd_show_pool(struct cli_def *cli, char *command, char **argv, int ar
 	time(&time_now);
 	if (show_summary)
 	{
-		cli_print(cli,"%-31s %9s", "IP Address Range", "Pool Name");
+		cli_print(cli,"%-33s %9s", "IP Address Range", "Pool Name");
 	}
 	else
 	{
@@ -939,7 +939,7 @@ static int cmd_show_pool(struct cli_def *cli, char *command, char **argv, int ar
 				{
 					if (!ip_address_pool[x][y][i].address && ip_address_pool[x][y][i-1].address)
 					{
-						cli_print(cli, "%s-%-15s %c%c", fmtaddr(htonl(ip_address_pool[x][y][1].address),0),
+						cli_print(cli, "%-15s - %-15s %c%c", fmtaddr(htonl(ip_address_pool[x][y][1].address),0),
 										   fmtaddr(htonl(ip_address_pool[x][y][i-1].address),1),
 										   x,y);
 					}
@@ -953,10 +953,10 @@ static int cmd_show_pool(struct cli_def *cli, char *command, char **argv, int ar
                 }
         }
 
-	if (!show_all)
+	if (!show_all && !show_summary)
 		cli_print(cli, "(Not displaying unused addresses)");
-
-	cli_print(cli, "\r\nFree: %d\r\nUsed: %d", free, used);
+	if (!show_summary)
+		cli_print(cli, "\r\nFree: %d\r\nUsed: %d", free, used);
 	return CLI_OK;
 }
 
