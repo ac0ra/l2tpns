@@ -3894,7 +3894,7 @@ static int assign_ip_address(sessionidt s)
 	 */
 	if (pool == NULL)
 	{
-                LOG(0, s, session[s].tunnel, "assign_ip_address(): Uninitialized ip pool %c%c defaulting to default pool\n",(x || ' '),(y || ' '));
+                LOG(0, s, session[s].tunnel, "assign_ip_address(): Uninitialized ip pool %c%c defaulting to default pool\n", session[s].pool_id[0],session[s].pool_id[1]);
                 pool = ip_address_pool[0][0];
                 pool_size = ip_pool_size[0][0];
 	}
@@ -3940,7 +3940,7 @@ static int assign_ip_address(sessionidt s)
 
 	STAT(ip_allocated);
 	LOG(4, s, session[s].tunnel, "assign_ip_address(): %s ip address %d from pool %c%c\n",
-		reuse ? "Reusing" : "Allocating", best, (x || ' '), (y || ' '));
+		reuse ? "Reusing" : "Allocating", best, session[s].pool_id[0],session[s].pool_id[1]);
 
 	return 1;
 }
@@ -3975,6 +3975,7 @@ static void free_ip_address(sessionidt s)
 	if (pool == NULL) {
 		//Then we've added them to the default pool
 		pool = ip_address_pool[0][0];
+                LOG(0, s, session[s].tunnel, "free_ip_address(): Uninitialized ip pool %c%c removing ip used from default pool\n", session[s].pool_id[0],session[s].pool_id[1]);
 	}
 	pool[i].assigned = 0;
 	pool[i].session = 0;
