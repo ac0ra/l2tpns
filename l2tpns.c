@@ -446,7 +446,7 @@ static void routeset(sessionidt s, in_addr_t ip, in_addr_t mask, in_addr_t gw, i
 	    gw ? " via" : "", gw ? fmtaddr(htonl(gw), 2) : "");
 
 	if (ioctl(ifrfd, add ? SIOCADDRT : SIOCDELRT, (void *) &r) < 0)
-		LOG(0, 0, 0, "routeset() error in ioctl: %s (FD: %p Tun Dev: %s)\n", strerror(errno), ifrfd, config->tundevice);
+		LOG(0, 0, 0, "routeset() error in ioctl: %s \n", strerror(errno));
 
 #ifdef BGP
 	if (add)
