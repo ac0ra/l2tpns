@@ -45,7 +45,7 @@ char const *cvs_id_l2tpns = "$Id: l2tpns.c,v 1.161.2.1 2006/06/22 15:30:50 bodea
 #include "l2tpns.h"
 #include "cluster.h"
 #include "plugin.h"
-#include "ll.h"session[s].pool_id[0],session[s].pool_id[1]
+#include "ll.h"
 #include "constants.h"
 #include "control.h"
 #include "util.h"
