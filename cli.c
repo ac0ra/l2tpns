@@ -1802,7 +1802,7 @@ static int cmd_remove_plugin(struct cli_def *cli, char *command, char **argv, in
 
 static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int argc)
 {
-	uint8_t x,y = 0;
+	uint8_t x,y,i = 0;
 
 	if (CLI_HELP_REQUESTED)
 		return cli_arg_help(cli, argc > 1,
@@ -1823,7 +1823,15 @@ static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int
 		return CLI_OK;
 	}
 
+	//Add the IP Pool
 	initippool(x,y);
+
+	//Refresh BGP
+	for (i = 0; i < BGP_NUM_PEERS; i++)
+	{
+		bgp_restart(&bgp_peers[i]);
+	}
+
 
 	if (ip_address_pool[x][y] == NULL)
 	{
