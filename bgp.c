@@ -47,7 +47,7 @@ static int bgp_send_notification(struct bgp_peer *peer, uint8_t code,
     uint8_t subcode);
 
 static uint16_t our_as;
-static struct bgp_route_list *bgp_routes = 0;
+struct bgp_route_list *bgp_routes = 0;
 
 int bgp_configured = 0;
 struct bgp_peer *bgp_peers = 0;
@@ -1088,6 +1088,8 @@ static int bgp_send_update(struct bgp_peer *peer)
 	+ sizeof(peer->outbuf->packet.data)
 	- sizeof(attr_len) - peer->path_attr_len - sizeof(struct bgp_ip_prefix);
 
+LOG(0, 0, 0, "Preparing to add/remove routes in fn bgp_send_update()");
+
     /* skip over unf_len */
     data += sizeof(unf_len);
     len += sizeof(unf_len);
@@ -1099,15 +1101,20 @@ static int bgp_send_update(struct bgp_peer *peer)
 
     peer->update_routes = 0; /* tentatively clear */
 
+LOG(0, 0, 0, "Before while loop, peer->routing = %d ; peer->update_routes = %d ; add = %p ; want = %p have = %p", peer->routing, peer->update_routes,add,want,have);
+
     /* find differences */
     while ((have || want) && data < (max - sizeof(struct bgp_ip_prefix)))
     {
+
 	if (have)
 	    s = want
 		? memcmp(&have->dest, &want->dest, sizeof(have->dest))
 	    	: -1;
 	else
 	    s = 1;
+
+LOG(0, 0, 0, "In while loop, peer->update_routes = %d ; add = %p ; want = %p have = %p ; s = %d", peer->update_routes,add,want,have,s);
 
 	if (s < 0) /* found one to delete */
 	{
@@ -1140,6 +1147,7 @@ static int bgp_send_update(struct bgp_peer *peer)
 	    }
 	    else if (s > 0) /* addition reqd. */
 	    {
+		LOG(5, 0, 0, "Want to add a route, but add = %d \n",add);
 		if (add)
 		{
 		    peer->update_routes = 1; /* only one add per packet */
@@ -1157,6 +1165,8 @@ static int bgp_send_update(struct bgp_peer *peer)
 
     if (have || want)
 	peer->update_routes = 1; /* more to do */
+
+LOG(0, 0, 0, "AFter while loop, peer->update_routes = %d ; add = %p ; want = %p have = %p", peer->update_routes,add,want,have);
 
     /* anything changed? */
     if (!(unf_len || add))

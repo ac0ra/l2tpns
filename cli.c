@@ -51,6 +51,8 @@ extern struct cli_tunnel_actions *cli_tunnel_actions;
 extern tbft *filter_list;
 extern ip_filtert *ip_filters;
 
+//TODO:remove.
+extern struct bgp_route_list *bgp_routes;
 struct
 {
 	char critical;
@@ -1803,7 +1805,15 @@ static int cmd_remove_plugin(struct cli_def *cli, char *command, char **argv, in
 static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int argc)
 {
 	uint8_t x,y,i = 0;
-
+		//DEBUGGING TODO: remove
+		{
+			struct bgp_route_list *r = bgp_routes;
+			while (r)
+			{
+				cli_print(cli, "bgp_routes entry: %u %u\n", r->dest.len, r->dest.prefix);
+				r = r->next;
+			}
+		}
 	if (CLI_HELP_REQUESTED)
 		return cli_arg_help(cli, argc > 1,
 			"IP-POOL", "Name of IP pool to load", NULL);
@@ -1826,18 +1836,36 @@ static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int
 	//Add the IP Pool
 	initippool(x,y);
 
-	//Refresh BGP
-	for (i = 0; i < BGP_NUM_PEERS; i++)
-	{
-		bgp_restart(&bgp_peers[i]);
-	}
-
-
 	if (ip_address_pool[x][y] == NULL)
 	{
 		cli_error(cli, "Unable to load IP Pool %c%c. Check that it exists on the filesystem.", x, y);
 		return CLI_OK;
 	}
+
+	cli_print(cli, "Pool %s loaded.", argv[0]);
+
+	for (i = 0; i < BGP_NUM_PEERS; i++)
+	{
+		if (!*bgp_peers[i].name)
+			continue;
+
+		bgp_peers[i].update_routes = 1;
+		bgp_peers[i].routing = 1;
+		cli_print(cli, "\tAdding route and sending update to peer %s", bgp_peers[i].name);
+
+
+	}
+		//DEBUGGING TODO: remove
+		{
+			struct bgp_route_list *r = bgp_routes;
+			while (r)
+			{
+				cli_print(cli, "bgp_routes entry: %u %u\n", r->dest.len, r->dest.prefix);
+				r = r->next;
+			}
+		}
+	rebuild_address_pool();
+
 	return CLI_OK;
 }
 

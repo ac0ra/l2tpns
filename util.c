@@ -73,6 +73,8 @@ pid_t fork_and_close()
     signal(SIGKILL, SIG_DFL);
     signal(SIGTERM, SIG_DFL);
 
+    LOG(0, 0, 0, "Closing sockets in pid %i\n",pid);
+
     // Close sockets
     if (clifd != -1)          close(clifd);
     if (cluster_sockfd != -1) close(cluster_sockfd);
@@ -81,7 +83,7 @@ pid_t fork_and_close()
     if (controlfd != -1)      close(controlfd);
     if (daefd != -1)          close(daefd);
     if (snoopfd != -1)        close(snoopfd);
-    if (ifrfd != -1)          close(ifrfd);
+//    if (ifrfd != -1)          close(ifrfd);
     if (ifr6fd != -1)         close(ifr6fd);
     if (rand_fd != -1)        close(rand_fd);
     if (epollfd != -1)        close(epollfd);
