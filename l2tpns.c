@@ -5363,6 +5363,7 @@ void become_master(void)
 	// problem by forking for the moment (note: race)
 	if (!fork_and_close())
 	{
+		//The child does the following:
 		for (s = 1; s <= config->cluster_highest_sessionid ; ++s)
 		{
 			if (!session[s].opened) // Not an in-use session.

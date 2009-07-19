@@ -1810,7 +1810,7 @@ static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int
 			struct bgp_route_list *r = bgp_routes;
 			while (r)
 			{
-				cli_print(cli, "bgp_routes entry: %u %u\n", r->dest.len, r->dest.prefix);
+				cli_print(cli, "bgp_routes entry: %u %u", r->dest.len, fmtaddr(r->dest.prefix,0));
 				r = r->next;
 			}
 		}
@@ -1860,7 +1860,7 @@ static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int
 			struct bgp_route_list *r = bgp_routes;
 			while (r)
 			{
-				cli_print(cli, "bgp_routes entry: %u %u\n", r->dest.len, r->dest.prefix);
+				cli_print(cli, "bgp_routes entry: %u %u", r->dest.len, fmtaddr(r->dest.prefix,0));
 				r = r->next;
 			}
 		}

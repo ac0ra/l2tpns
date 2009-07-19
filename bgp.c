@@ -1081,6 +1081,16 @@ static int bgp_send_update(struct bgp_peer *peer)
     struct bgp_route_list *add = 0;
     int s;
 
+		//DEBUGGING TODO: remove
+		{
+			struct bgp_route_list *r = want;
+			while (r)
+			{
+				LOG(0,0,0, "ROBLOG: bgp_routes entry: %u %u", r->dest.len, fmtaddr(r->dest.prefix,0));
+				r = r->next;
+			}
+		}
+
     char *data = (char *) &peer->outbuf->packet.data;
 
     /* need leave room for attr_len, bgp_path_attrs and one prefix */

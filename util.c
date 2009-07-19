@@ -76,6 +76,8 @@ pid_t fork_and_close()
     LOG(0, 0, 0, "Closing sockets in pid %i\n",pid);
 
     // Close sockets
+	// Children should not close the ifrfd sockets as we may
+	// wish to add routes later. - Rob
     if (clifd != -1)          close(clifd);
     if (cluster_sockfd != -1) close(cluster_sockfd);
     if (tunfd != -1)          close(tunfd);
