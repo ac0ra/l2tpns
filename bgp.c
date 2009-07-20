@@ -1113,11 +1113,13 @@ static int bgp_send_update(struct bgp_peer *peer)
 	}
 	else
 	{
+	
 	    if (!s) /* same */
 	    {
 		e = have; /* stash the last found to relink above */
 		have = have->next;
-		want = &want_array[++want_index]; //this is an array now
+		want_index++;
+		want = &want_array[want_index]; //this is an array now
 	    }
 	    else if (s > 0) /* addition reqd. */
 	    {
@@ -1133,8 +1135,10 @@ static int bgp_send_update(struct bgp_peer *peer)
 		    memcpy(&add->dest, want, sizeof(struct bgp_ip_prefix));
 		}
 
-		if (want)
-		    want = &want_array[++want_index]; //this is an array now
+		if (want) {
+		    want_index++;
+		    want = &want_array[want_index]; //this is an array now
+		}
 	    }
 	}
     }
@@ -1178,8 +1182,11 @@ static int bgp_send_update(struct bgp_peer *peer)
 	data += s;
 	len += s;
 
-	LOG(5, 0, 0, "Advertising route %s/%d to BGP peer %s\n",
+	LOG(3, 0, 0, "Advertising route %s/%d to BGP peer %s\n",
 	    fmtaddr(add->dest.prefix, 0), add->dest.len, peer->name);
+
+        // We malloc this now that we use an array.
+        free(add);
     }
     else
     {
@@ -1191,10 +1198,6 @@ static int bgp_send_update(struct bgp_peer *peer)
 
     peer->outbuf->packet.header.len = htons(len);
     peer->outbuf->done = 0;
-
-    // We malloc this now that we use an array.
-    if (add)
-        free(add);
 
     return bgp_write(peer);
 }
