@@ -45,11 +45,11 @@ static int bgp_send_keepalive(struct bgp_peer *peer);
 static int bgp_send_update(struct bgp_peer *peer);
 static int bgp_send_notification(struct bgp_peer *peer, uint8_t code,
     uint8_t subcode);
-
+static int compare_bgp_ip_prefixes(const void *a, const void *b);
 static uint16_t our_as;
 
 int bgp_configured = 0;
-struct bgp_route_list *bgp_routes = 0;
+struct bgp_ip_prefix *bgp_routes = 0;
 struct bgp_peer *bgp_peers = 0;
 
 /* prepare peer structure, globals */
@@ -383,37 +383,26 @@ static struct bgp_route_list *bgp_insert_route(struct bgp_route_list *head,
  */
 int bgp_add_route(in_addr_t ip, in_addr_t mask)
 {
-    struct bgp_route_list *r = bgp_routes;
-    struct bgp_route_list add;
-    int i;
+    struct bgp_ip_prefix add;
+	int i;
 
-    bgp_cidr(ip, mask, &add.dest);
-    add.next = 0;
+    //Convert to CIDR notation
+    bgp_cidr(ip, mask, &add);
 
     /* check for duplicate */
-    while (r)
+    for (i=0;i < BGP_MAX_ROUTES; i++)
     {
-	i = memcmp(&r->dest, &add.dest, sizeof(r->dest));
-	if (!i)
-	    return 1; /* already covered */
+			if (!memcmp(&bgp_routes[i], &add, sizeof(bgp_routes[i])))
+				return 1; /* already covered */
 
-	if (i > 0)
-	    break;
-
-	r = r->next;
+			if (!bgp_routes[i].len) 
+			{
+				memcpy(&bgp_routes[i], &add, sizeof(bgp_routes[i]));
+				break;
+			}
     }
 
-    /* insert into route list; sorted */
-    if (!(r = shared_malloc(sizeof(*r))))
-    {
-	LOG(0, 0, 0, "Can't allocate route for %s/%d (%s)\n",
-	    fmtaddr(add.dest.prefix, 0), add.dest.len, strerror(errno));
-
-	return 0;
-    }
-
-    memcpy(r, &add, sizeof(*r));
-    bgp_routes = bgp_insert_route(bgp_routes, r);
+	qsort(bgp_routes,BGP_MAX_ROUTES,sizeof(struct bgp_ip_prefix),compare_bgp_ip_prefixes);
 
     /* flag established peers for update */
     for (i = 0; i < BGP_NUM_PEERS; i++)
@@ -421,48 +410,38 @@ int bgp_add_route(in_addr_t ip, in_addr_t mask)
 	    bgp_peers[i].update_routes = 1;
 
     LOG(4, 0, 0, "Registered BGP route %s/%d\n",
-	fmtaddr(add.dest.prefix, 0), add.dest.len);
+	fmtaddr(add.prefix, 0), add.len);
 
     return 1;
+}
+
+static int compare_bgp_ip_prefixes(const void *a, const void *b) {
+	const struct bgp_ip_prefix *bgpa = (const struct bgp_ip_prefix *) a;
+	const struct bgp_ip_prefix *bgpb = (const struct bgp_ip_prefix *) b;
+	return memcmp(bgpa, bgpb, sizeof(bgpa)) < 0;
 }
 
 /* remove route from list for peers */
 int bgp_del_route(in_addr_t ip, in_addr_t mask)
 {
-    struct bgp_route_list *r = bgp_routes;
-    struct bgp_route_list *e = 0;
-    struct bgp_route_list del;
     int i;
+	struct bgp_ip_prefix del;
 
-    bgp_cidr(ip, mask, &del.dest);
-    del.next = 0;
+    bgp_cidr(ip, mask, &del);
 
-    /* find entry in routes list and remove */
-    while (r)
+    /* find route to be removed */
+    for (i=0;i < BGP_MAX_ROUTES; i++)
     {
-	i = memcmp(&r->dest, &del.dest, sizeof(r->dest));
-	if (!i)
-	{
-	    if (e)
-		e->next = r->next;
-	    else
-	    	bgp_routes = r->next;
+			if (!memcmp(&bgp_routes[i], &del, sizeof(bgp_routes[i]))) {
+				memset(&bgp_routes[i], 0, sizeof(bgp_routes[i])); //Clear the route
+				break;
+			}
 
-	    shared_free(r,sizeof(struct bgp_route_list));
-	    break;
-	}
-
-	e = r;
-
-	if (i > 0)
-	    r = 0; /* stop */
-	else
-	    r = r->next;
+			if (!bgp_routes[i].len) 
+				return 1; //not found.
     }
 
-    /* not found */
-    if (!r)
-	return 1;
+	qsort(bgp_routes,BGP_MAX_ROUTES,sizeof(struct bgp_ip_prefix),compare_bgp_ip_prefixes);
 
     /* flag established peers for update */
     for (i = 0; i < BGP_NUM_PEERS; i++)
@@ -470,7 +449,7 @@ int bgp_del_route(in_addr_t ip, in_addr_t mask)
 	    bgp_peers[i].update_routes = 1;
 
     LOG(4, 0, 0, "Removed BGP route %s/%d\n",
-	fmtaddr(del.dest.prefix, 0), del.dest.len);
+	fmtaddr(del.prefix, 0), del.len);
 
     return 1;
 }
@@ -1076,7 +1055,9 @@ static int bgp_send_update(struct bgp_peer *peer)
     uint16_t attr_len;
     uint16_t len = sizeof(peer->outbuf->packet.header);
     struct bgp_route_list *have = peer->routes;
-    struct bgp_route_list *want = peer->routing ? bgp_routes : 0;
+    uint32_t want_index = 0;
+    struct bgp_ip_prefix *want_array = peer->routing ? bgp_routes : 0;
+    struct bgp_ip_prefix *want = peer->routing ? &want_array[0] : 0;
     struct bgp_route_list *e = 0;
     struct bgp_route_list *add = 0;
     int s;
@@ -1098,18 +1079,17 @@ static int bgp_send_update(struct bgp_peer *peer)
     peer->outbuf->packet.header.type = BGP_MSG_UPDATE;
 
     peer->update_routes = 0; /* tentatively clear */
-LOG(0, 0, 0, "Before while loop, peer->routing = %d ; peer->update_routes = %d ; add = %p ; want = %p have = %p", peer->routing, peer->update_routes,add,want,have);
+
     /* find differences */
     while ((have || want) && data < (max - sizeof(struct bgp_ip_prefix)))
     {
-LOG(0, 0, 0, "In while loop 1, peer->update_routes = %d ; add = %p ; want = %p have = %p ; s = %d", peer->update_routes,add,want,have,s);
 	if (have)
 	    s = want
-		? memcmp(&have->dest, &want->dest, sizeof(have->dest))
+		? memcmp(&have->dest, want, sizeof(have->dest))
 	    	: -1;
 	else
 	    s = 1;
-LOG(0, 0, 0, "In while loop 2, peer->update_routes = %d ; add = %p ; want = %p have = %p ; s = %d", peer->update_routes,add,want,have,s);
+
 	if (s < 0) /* found one to delete */
 	{
 	    struct bgp_route_list *tmp = have;
@@ -1137,7 +1117,7 @@ LOG(0, 0, 0, "In while loop 2, peer->update_routes = %d ; add = %p ; want = %p h
 	    {
 		e = have; /* stash the last found to relink above */
 		have = have->next;
-		want = want->next;
+		want = &want_array[++want_index]; //this is an array now
 	    }
 	    else if (s > 0) /* addition reqd. */
 	    {
@@ -1148,10 +1128,13 @@ LOG(0, 0, 0, "In while loop 2, peer->update_routes = %d ; add = %p ; want = %p h
 		    	break;
 		}
 		else
-		    add = want;
+		{
+		    add = malloc(sizeof(struct bgp_route_list));
+		    memcpy(&add->dest, want, sizeof(struct bgp_ip_prefix));
+		}
 
 		if (want)
-		    want = want->next;
+		    want = &want_array[++want_index]; //this is an array now
 	    }
 	}
     }
@@ -1208,6 +1191,10 @@ LOG(0, 0, 0, "In while loop 2, peer->update_routes = %d ; add = %p ; want = %p h
 
     peer->outbuf->packet.header.len = htons(len);
     peer->outbuf->done = 0;
+
+    // We malloc this now that we use an array.
+    if (add)
+        free(add);
 
     return bgp_write(peer);
 }

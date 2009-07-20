@@ -3859,11 +3859,12 @@ static void initdata(int optdebug, char *optconfig)
 	_statistics->start_time = _statistics->last_reset = time(NULL);
 
 #ifdef BGP
-	if (!(bgp_routes = shared_malloc(sizeof(struct bgp_route_list))))
+	if (!(bgp_routes = shared_malloc(sizeof(struct bgp_ip_prefix) * BGP_MAX_ROUTES)))
 	{
 		LOG(0, 0, 0, "Error doing malloc for bgp_routes: %s\n", strerror(errno));
 		exit(1);
 	}
+	memset(bgp_routes, 0, sizeof(struct bgp_ip_prefix) * BGP_MAX_ROUTES);
 
 	if (!(bgp_peers = shared_malloc(sizeof(struct bgp_peer) * BGP_NUM_PEERS)))
 	{
