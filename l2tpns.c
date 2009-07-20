@@ -446,7 +446,7 @@ static void routeset(sessionidt s, in_addr_t ip, in_addr_t mask, in_addr_t gw, i
 	    gw ? " via" : "", gw ? fmtaddr(htonl(gw), 2) : "");
 
 	if (ioctl(ifrfd, add ? SIOCADDRT : SIOCDELRT, (void *) &r) < 0)
-		LOG(0, 0, 0, "routeset() error in ioctl: %s \n", strerror(errno));
+		LOG(0, 0, 0, "routeset() error in ioctl: %s\n", strerror(errno));
 
 #ifdef BGP
 	if (add)
@@ -3859,9 +3859,15 @@ static void initdata(int optdebug, char *optconfig)
 	_statistics->start_time = _statistics->last_reset = time(NULL);
 
 #ifdef BGP
+	if (!(bgp_routes = shared_malloc(sizeof(struct bgp_route_list))))
+	{
+		LOG(0, 0, 0, "Error doing malloc for bgp_routes: %s\n", strerror(errno));
+		exit(1);
+	}
+
 	if (!(bgp_peers = shared_malloc(sizeof(struct bgp_peer) * BGP_NUM_PEERS)))
 	{
-		LOG(0, 0, 0, "Error doing malloc for bgp: %s\n", strerror(errno));
+		LOG(0, 0, 0, "Error doing malloc for bgp_peers: %s\n", strerror(errno));
 		exit(1);
 	}
 #endif /* BGP */
@@ -5363,7 +5369,6 @@ void become_master(void)
 	// problem by forking for the moment (note: race)
 	if (!fork_and_close())
 	{
-		//The child does the following:
 		for (s = 1; s <= config->cluster_highest_sessionid ; ++s)
 		{
 			if (!session[s].opened) // Not an in-use session.

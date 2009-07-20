@@ -182,6 +182,7 @@ struct bgp_peer {
 #define BGP_CLI_ENABLE		2
 #define BGP_CLI_RESTART		3
 
+extern struct bgp_route_list *bgp_routes;
 extern struct bgp_peer *bgp_peers;
 extern int bgp_configured;
 

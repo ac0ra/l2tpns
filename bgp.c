@@ -47,9 +47,9 @@ static int bgp_send_notification(struct bgp_peer *peer, uint8_t code,
     uint8_t subcode);
 
 static uint16_t our_as;
-struct bgp_route_list *bgp_routes = 0;
 
 int bgp_configured = 0;
+struct bgp_route_list *bgp_routes = 0;
 struct bgp_peer *bgp_peers = 0;
 
 /* prepare peer structure, globals */
@@ -404,7 +404,7 @@ int bgp_add_route(in_addr_t ip, in_addr_t mask)
     }
 
     /* insert into route list; sorted */
-    if (!(r = malloc(sizeof(*r))))
+    if (!(r = shared_malloc(sizeof(*r))))
     {
 	LOG(0, 0, 0, "Can't allocate route for %s/%d (%s)\n",
 	    fmtaddr(add.dest.prefix, 0), add.dest.len, strerror(errno));
@@ -448,7 +448,7 @@ int bgp_del_route(in_addr_t ip, in_addr_t mask)
 	    else
 	    	bgp_routes = r->next;
 
-	    free(r);
+	    shared_free(r,sizeof(struct bgp_route_list));
 	    break;
 	}
 
@@ -1081,24 +1081,12 @@ static int bgp_send_update(struct bgp_peer *peer)
     struct bgp_route_list *add = 0;
     int s;
 
-		//DEBUGGING TODO: remove
-		{
-			struct bgp_route_list *r = want;
-			while (r)
-			{
-				LOG(0,0,0, "ROBLOG: bgp_routes entry: %u %u", r->dest.len, fmtaddr(r->dest.prefix,0));
-				r = r->next;
-			}
-		}
-
     char *data = (char *) &peer->outbuf->packet.data;
 
     /* need leave room for attr_len, bgp_path_attrs and one prefix */
     char *max = (char *) &peer->outbuf->packet.data
 	+ sizeof(peer->outbuf->packet.data)
 	- sizeof(attr_len) - peer->path_attr_len - sizeof(struct bgp_ip_prefix);
-
-LOG(0, 0, 0, "Preparing to add/remove routes in fn bgp_send_update()");
 
     /* skip over unf_len */
     data += sizeof(unf_len);
@@ -1111,20 +1099,15 @@ LOG(0, 0, 0, "Preparing to add/remove routes in fn bgp_send_update()");
 
     peer->update_routes = 0; /* tentatively clear */
 
-LOG(0, 0, 0, "Before while loop, peer->routing = %d ; peer->update_routes = %d ; add = %p ; want = %p have = %p", peer->routing, peer->update_routes,add,want,have);
-
     /* find differences */
     while ((have || want) && data < (max - sizeof(struct bgp_ip_prefix)))
     {
-
 	if (have)
 	    s = want
 		? memcmp(&have->dest, &want->dest, sizeof(have->dest))
 	    	: -1;
 	else
 	    s = 1;
-
-LOG(0, 0, 0, "In while loop, peer->update_routes = %d ; add = %p ; want = %p have = %p ; s = %d", peer->update_routes,add,want,have,s);
 
 	if (s < 0) /* found one to delete */
 	{
@@ -1157,7 +1140,6 @@ LOG(0, 0, 0, "In while loop, peer->update_routes = %d ; add = %p ; want = %p hav
 	    }
 	    else if (s > 0) /* addition reqd. */
 	    {
-		LOG(5, 0, 0, "Want to add a route, but add = %d \n",add);
 		if (add)
 		{
 		    peer->update_routes = 1; /* only one add per packet */
@@ -1175,8 +1157,6 @@ LOG(0, 0, 0, "In while loop, peer->update_routes = %d ; add = %p ; want = %p hav
 
     if (have || want)
 	peer->update_routes = 1; /* more to do */
-
-LOG(0, 0, 0, "AFter while loop, peer->update_routes = %d ; add = %p ; want = %p have = %p", peer->update_routes,add,want,have);
 
     /* anything changed? */
     if (!(unf_len || add))
