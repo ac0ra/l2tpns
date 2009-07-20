@@ -1058,7 +1058,6 @@ static int bgp_send_update(struct bgp_peer *peer)
     uint32_t want_index = 0;
     struct bgp_ip_prefix *want_array = peer->routing ? bgp_routes : 0;
     struct bgp_ip_prefix *want = peer->routing ? &want_array[0] : 0;
-    struct bgp_route_list *e = 0;
     struct bgp_route_list *add = 0;
     int s;
 
@@ -1106,10 +1105,7 @@ static int bgp_send_update(struct bgp_peer *peer)
 
 	    free(tmp);
 
-	    if (e)
-		e->next = have;
-	    else
-	    	peer->routes = have;
+	    peer->routes = have;
 	}
 	else
 	{
@@ -1118,8 +1114,7 @@ static int bgp_send_update(struct bgp_peer *peer)
 	    {
 		e = have; /* stash the last found to relink above */
 		have = have->next;
-		want_index++;
-		want = &want_array[want_index]; //this is an array now
+		want = &want_array[++want_index]; //this is an array now
 	    }
 	    else if (s > 0) /* addition reqd. */
 	    {
@@ -1131,13 +1126,18 @@ static int bgp_send_update(struct bgp_peer *peer)
 		}
 		else
 		{
-		    add = malloc(sizeof(struct bgp_route_list));
+		    if (!(add = malloc(sizeof(struct bgp_route_list)))
+		    {
+			LOG(0, 0, 0, "Can't allocate route for %s/%d (%s)\n",
+			fmtaddr(want.prefix, 0), add->dest.len, strerror(errno));
+
+			return 0;
+		    }
 		    memcpy(&add->dest, want, sizeof(struct bgp_ip_prefix));
 		}
 
 		if (want) {
-		    want_index++;
-		    want = &want_array[want_index]; //this is an array now
+		    want = &want_array[++want_index]; //this is an array now
 		}
 	    }
 	}
@@ -1156,17 +1156,8 @@ static int bgp_send_update(struct bgp_peer *peer)
 
     if (add)
     {
-	if (!(e = malloc(sizeof(*e))))
-	{
-	    LOG(0, 0, 0, "Can't allocate route for %s/%d (%s)\n",
-		fmtaddr(add->dest.prefix, 0), add->dest.len, strerror(errno));
-
-	    return 0;
-	}
-
-	memcpy(e, add, sizeof(*e));
-	e->next = 0;
-	peer->routes = bgp_insert_route(peer->routes, e);
+	add->next = 0;
+	peer->routes = bgp_insert_route(peer->routes, add);
 
 	attr_len = htons(peer->path_attr_len);
 	memcpy(data, &attr_len, sizeof(attr_len));
@@ -1184,9 +1175,6 @@ static int bgp_send_update(struct bgp_peer *peer)
 
 	LOG(3, 0, 0, "Advertising route %s/%d to BGP peer %s\n",
 	    fmtaddr(add->dest.prefix, 0), add->dest.len, peer->name);
-
-        // We malloc this now that we use an array.
-        free(add);
     }
     else
     {
