@@ -1098,17 +1098,18 @@ static int bgp_send_update(struct bgp_peer *peer)
     peer->outbuf->packet.header.type = BGP_MSG_UPDATE;
 
     peer->update_routes = 0; /* tentatively clear */
-
+LOG(0, 0, 0, "Before while loop, peer->routing = %d ; peer->update_routes = %d ; add = %p ; want = %p have = %p", peer->routing, peer->update_routes,add,want,have);
     /* find differences */
     while ((have || want) && data < (max - sizeof(struct bgp_ip_prefix)))
     {
+LOG(0, 0, 0, "In while loop 1, peer->update_routes = %d ; add = %p ; want = %p have = %p ; s = %d", peer->update_routes,add,want,have,s);
 	if (have)
 	    s = want
 		? memcmp(&have->dest, &want->dest, sizeof(have->dest))
 	    	: -1;
 	else
 	    s = 1;
-
+LOG(0, 0, 0, "In while loop 2, peer->update_routes = %d ; add = %p ; want = %p have = %p ; s = %d", peer->update_routes,add,want,have,s);
 	if (s < 0) /* found one to delete */
 	{
 	    struct bgp_route_list *tmp = have;
