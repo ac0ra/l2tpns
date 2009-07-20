@@ -1811,15 +1811,15 @@ static int cmd_add_ip_pool(struct cli_def *cli, char *command, char **argv, int 
 	uint8_t y = 0;
 	
 	if (CLI_HELP_REQUESTED)
-		return cli_arg_help(cli, argc > 2, "IP-RANGE", "IP or network to add", "IP-POOL", "Name of IP pool (Optional)");
+		return cli_arg_help(cli, argc > 2, "IP-RANGE", "IP or network to add", "IP-POOL", "Name of IP pool (or 'default')", NULL);
 
-	if (argc < 1)
+	if (argc != 2)
 	{
-		cli_error(cli, "Specify an IP pool to load");
+		cli_error(cli, "Specify a range and the IP pool to load it into.");
 		return CLI_OK;
 	}
 
-	if (argc == 2) {
+	if (strcmp(argv[1], "default") != 0) {
 		x = argv[1][0];
 		y = argv[1][1];
 		cli_print(cli,"Adding %s to pool %s.", argv[0], argv[1]);
@@ -1834,7 +1834,7 @@ static int cmd_add_ip_pool(struct cli_def *cli, char *command, char **argv, int 
 		cli_error(cli, "Unable to add to IP Pool %c%c. Check that it exists.", x, y);
 		return CLI_OK;
 	}
-	if (argc == 2)
+	if (strcmp(argv[1], "default") != 0)
 		cli_print(cli, "Range added. Please remember to add it to the config file /etc/l2tpns/ip_pool.%c%c", x,y);
 	else
 		cli_print(cli, "Range added. Please remember to add it to the config file /etc/l2tpns/ip_pool");
