@@ -97,9 +97,11 @@ static int cmd_debug(struct cli_def *cli, char *command, char **argv, int argc);
 static int cmd_no_debug(struct cli_def *cli, char *command, char **argv, int argc);
 static int cmd_set(struct cli_def *cli, char *command, char **argv, int argc);
 static int cmd_load_plugin(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int argc);
 static int cmd_remove_plugin(struct cli_def *cli, char *command, char **argv, int argc);
 static int cmd_uptime(struct cli_def *cli, char *command, char **argv, int argc);
+
+static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int argc);
+static int cmd_add_ip_pool(struct cli_def *cli, char *command, char **argv, int argc);
 
 static int regular_stuff(struct cli_def *cli);
 
@@ -217,6 +219,9 @@ void init_cli(char *hostname)
 	cli_register_command(cli, c, "user", cmd_drop_user, PRIVILEGE_PRIVILEGED, MODE_EXEC, "Disconnect a user");
 	cli_register_command(cli, c, "tunnel", cmd_drop_tunnel, PRIVILEGE_PRIVILEGED, MODE_EXEC, "Disconnect a tunnel and all sessions on that tunnel");
 	cli_register_command(cli, c, "session", cmd_drop_session, PRIVILEGE_PRIVILEGED, MODE_EXEC, "Disconnect a session");
+	
+	c = cli_register_command(cli, NULL, "add", NULL, PRIVILEGE_PRIVILEGED, MODE_CONFIG, NULL);
+	cli_register_command(cli, c, "ip-pool", cmd_add_ip_pool, PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Add new range to an IP pool");
 
 	c = cli_register_command(cli, NULL, "load", NULL, PRIVILEGE_PRIVILEGED, MODE_CONFIG, NULL);
 	cli_register_command(cli, c, "plugin", cmd_load_plugin, PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Load a plugin");
@@ -1797,6 +1802,42 @@ static int cmd_remove_plugin(struct cli_def *cli, char *command, char **argv, in
 	}
 
 	cli_error(cli, "Plugin is not loaded");
+	return CLI_OK;
+}
+
+static int cmd_add_ip_pool(struct cli_def *cli, char *command, char **argv, int argc)
+{
+	uint8_t x = 0;
+	uint8_t y = 0;
+	
+	if (CLI_HELP_REQUESTED)
+		return cli_arg_help(cli, argc > 2, "IP-RANGE", "IP or network to add", "IP-POOL", "Name of IP pool (Optional)");
+
+	if (argc < 1)
+	{
+		cli_error(cli, "Specify an IP pool to load");
+		return CLI_OK;
+	}
+
+	if (argc == 2) {
+		x = argv[1][0];
+		y = argv[1][1];
+		cli_print(cli,"Adding %s to pool %s.", argv[0], argv[1]);
+	} else {
+		cli_print(cli,"Adding %s to the default pool.", argv[0]);
+	}
+
+	add_ip_range(argv[0], x, y);
+	
+	if (ip_address_pool[x][y] == NULL)
+	{
+		cli_error(cli, "Unable to add to IP Pool %c%c. Check that it exists.", x, y);
+		return CLI_OK;
+	}
+	if (argc == 2)
+		cli_print(cli, "Range added. Please remember to add it to the config file /etc/l2tpns/ip_pool.%c%c", x,y);
+	else
+		cli_print(cli, "Range added. Please remember to add it to the config file /etc/l2tpns/ip_pool");
 	return CLI_OK;
 }
 
