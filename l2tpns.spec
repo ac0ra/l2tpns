@@ -2,7 +2,7 @@
 %define svn_url "http://build.dev.iseek.com.au/development/internal/software/l2tpns/trunk"
 
 # SVN Version
-%define svn_revision 2981
+%define svn_revision 2983
 
 # Release counter
 %define rpm_release 1
