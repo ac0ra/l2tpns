@@ -149,6 +149,7 @@ config_descriptt config_values[] = {
 	CONFIG("ipv6_prefix", ipv6_prefix, IPv6),
 	CONFIG("append_realm", append_realm, STRING),
         CONFIG("gardens", gardens, STRING),
+        CONFIG("default_garden", default_garden, INT),
 	{ NULL, 0, 0, 0 },
 };
 

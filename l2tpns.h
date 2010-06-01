@@ -630,6 +630,7 @@ typedef struct
 	
 	char		append_realm[MAXUSER-96];	
         char            gardens[MAXGARDEN * MAXGARDENCOUNT];
+	int			default_garden;       // enable or disable default garden called 'garden'
 
 } configt;
 

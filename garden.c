@@ -51,17 +51,26 @@ int garden_session(sessiont *s, int flag, char *newuser);
 
 int plugin_post_auth(struct param_post_auth *data)
 {
-    // Ignore if user authentication was successful
-    // In the case of the radius Wall-Authenticated-User, vendor-supplied
-    // attribute, auth_allowed will be 1 anyway, as will be walled_garden.
-    if (data->auth_allowed)
-	return PLUGIN_RET_OK;
+	// If he doesn't have credentials (wrong login/password)
+	// let's see what can still do for this user...
+    if (!data->auth_allowed)
+	{
+		int *defaultgarden = f->getconfig("default_garden", INT);
+		// if default garden is enabled then let's accept this user
+		// and throw him in the default garden otherwise... see ya
+		// Note: for backward compatibility, default garden is enabled
+		//       by default. To disable it you must explicitly set
+		//       "set default_garden 0' in the main configuration file
+		if (*defaultgarden != 0) 
+		{
+			f->log(3, f->get_id_by_session(data->s), data->s->tunnel,
+			"Walled Garden allowing login (default garden)\n");
 
-    f->log(3, f->get_id_by_session(data->s), data->s->tunnel,
-	"Walled Garden allowing login\n");
-
-    data->auth_allowed = 1;
-    data->s->walled_garden = 1;
+			data->auth_allowed = 1;
+			data->s->walled_garden = 1;
+      		strncpy(data->s->walled_garden_name, "garden",7);
+		} 
+	}
     return PLUGIN_RET_OK;
 }
 
