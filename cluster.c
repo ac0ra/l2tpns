@@ -575,14 +575,18 @@ void cluster_check_master(void)
 
 		if (peers[i].basetime < basetime) {
 			LOG(1, 0, 0, "Expecting %s to become master\n", fmtaddr(peers[i].peer, 0));
+			#ifdef ISEEK_CONTROL_MESSAGE
 			LOG(1, 0, 0, "iseek-control-message delegate_master %s\n", fmtaddr(peers[i].peer, 0));
+			#endif
 			return;		// They'll win the election. Get out of here.
 		}
 
 		if (peers[i].basetime == basetime &&
 			peers[i].peer > my_address) {
 			LOG(1, 0, 0, "Expecting %s to become master\n", fmtaddr(peers[i].peer, 0));
+			#ifdef ISEEK_CONTROL_MESSAGE
 			LOG(1, 0, 0, "iseek-control-message delegate_master %s\n", fmtaddr(peers[i].peer, 0));
+			#endif
 			return;		// They'll win the election. Wait for them to come up.
 		}
 
@@ -687,7 +691,9 @@ void cluster_check_master(void)
 	config->cluster_undefined_tunnels = 0;
 	config->cluster_iam_uptodate = 1; // assume all peers are up-to-date
 
+	#ifdef ISEEK_CONTROL_MESSAGE
 	LOG(1, 0, 0, "iseek-control-message become_master\n");
+	#endif
 
 	// FIXME. We need to fix up the tunnel control message
 	// queue here! There's a number of other variables we

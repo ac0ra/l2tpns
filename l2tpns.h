@@ -278,7 +278,7 @@ typedef struct
 	in_addr_t snoop_ip;		// Interception destination IP
 	uint16_t snoop_port;		// Interception destination port
 	uint8_t walled_garden;		// is this session gardened?
-        char  walled_garden_name[MAXGARDEN];       // name of the walled garden this user is in
+    char  walled_garden_name[MAXGARDEN];       // name of the walled garden this user is in
 	uint8_t ipv6prefixlen;		// IPv6 route prefix length
 	struct in6_addr ipv6route;	// Static IPv6 route
         char pool_id[2];                // IP pool that we use for this
