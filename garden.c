@@ -58,9 +58,10 @@ int plugin_post_auth(struct param_post_auth *data)
 		int *defaultgarden = f->getconfig("default_garden", INT);
 		// if default garden is enabled then let's accept this user
 		// and throw him in the default garden otherwise... see ya
-		// Note: for backward compatibility, default garden is enabled
-		//       by default. To disable it you must explicitly set
-		//       "set default_garden 0' in the main configuration file
+		// Note: Backward compatibility/behaviour is broken /!\
+		//       default garden is now disabled by default. To enable
+		//       it you must explicitly set in the main configuration:
+		//         set default_garden 1 
 		if (*defaultgarden != 0) 
 		{
 			f->log(3, f->get_id_by_session(data->s), data->s->tunnel,
