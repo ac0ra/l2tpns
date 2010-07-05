@@ -536,10 +536,10 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 	{
 		if (!session[i].opened) continue;
 		
-		int t = (session[s].throttle_in || session[s].throttle_out);  //req for showing throttle speed
+		int t = (session[i].throttle_in || session[i].throttle_out);  //req for showing throttle speed
 		char[50] tspeed;
 		if (t) {
-			sprintf(&tspeed, "%.0dkbps/%.0dkbps", session[s].throttle_in, session[s].throttle_out);
+			sprintf(&tspeed, "%.0dkbps/%.0dkbps", session[i].throttle_in, session[i].throttle_out);
 		}
 
 		cli_print(cli, "%5d %4d %-32s %-15s %s %s %s %s %-32s %-16s %10u %10lu %10lu %4u %-15s %s",
