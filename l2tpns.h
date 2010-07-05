@@ -39,6 +39,7 @@
 #define MAXPASS		128		// password
 #define MAXGARDEN       16              // maximum size of the garden name string
 #define MAXGARDENCOUNT  16              // maximum size of the garden name string
+#define MAXZONENAME	2		// maximum size of the free traffic zone name string
 #define MAXPLUGINS	20		// maximum number of plugins to load
 #define MAXRADSERVER	10		// max radius servers
 #define MAXROUTE	10		// max static routes per session
@@ -75,6 +76,7 @@
 #define CONFIGFILE	FLASHDIR "/startup-config"	// Configuration file
 #define CLIUSERS	FLASHDIR "/users"		// CLI Users file
 #define IPPOOLFILE	FLASHDIR "/ip_pool"		// Address pool configuration
+#define FREETRAFFICFILE FLASHDIR "/free_traffic"	// Free traffic networks configuration
 #define ACCT_TIME	3000				// 5 minute accounting interval
 #define ACCT_SHUT_TIME	600				// 1 minute for counters of shutdown sessions
 #define L2TPPORT	1701				// L2TP port
@@ -256,6 +258,12 @@ typedef struct
 	uint32_t cin, cout;		// byte counts
 	uint32_t cin_wrap, cout_wrap;	// byte counter wrap count (RADIUS accounting giagawords)
 	uint32_t cin_delta, cout_delta;	// byte count changes (for dump_session())
+#ifdef FREETRAFFIC
+	uint32_t fcin, fcout;		// free traffic byte counts
+	uint32_t fcin_delta, fcout_delta;//free traffic byte changes
+	uint32_t fcin_wrap, fcout_wrap;	// free traffic byte counter int wrap count
+	char free_traffic[MAXZONENAME]; // free traffic zone (will only count freetraffic if set)
+#endif //FREETRAFFIC
 	uint16_t throttle_in;		// upstream throttle rate (kbps)
 	uint16_t throttle_out;		// downstream throttle rate
 	uint8_t filter_in;		// input filter index (to ip_filters[N-1]; 0 if none)
@@ -278,7 +286,7 @@ typedef struct
 	in_addr_t snoop_ip;		// Interception destination IP
 	uint16_t snoop_port;		// Interception destination port
 	uint8_t walled_garden;		// is this session gardened?
-    char  walled_garden_name[MAXGARDEN];       // name of the walled garden this user is in
+	char walled_garden_name[MAXGARDEN];       // name of the walled garden this user is in
 	uint8_t ipv6prefixlen;		// IPv6 route prefix length
 	struct in6_addr ipv6route;	// Static IPv6 route
         char pool_id[2];                // IP pool that we use for this
@@ -299,6 +307,12 @@ typedef struct
 	// byte counters
 	uint32_t cin;
 	uint32_t cout;
+
+#ifdef FREETRAFFIC
+	// byte counters
+	uint32_t fcin;
+	uint32_t fcout;
+#endif
 
 	// PPP restart timer/counters
 	struct {
@@ -574,6 +588,7 @@ typedef struct
 
 	char		accounting_dir[128];
 	char		garden_accounting_dir[128];
+	char		freetraffic_accounting_dir[128];
 	in_addr_t	bind_address;
 	in_addr_t	peer_address;
 	int		send_garp;			// Set to true to garp for vip address on startup

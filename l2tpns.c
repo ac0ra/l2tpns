@@ -50,9 +50,14 @@ char const *cvs_id_l2tpns = "$Id: l2tpns.c,v 1.161.2.1 2006/06/22 15:30:50 bodea
 #include "control.h"
 #include "util.h"
 #include "tbf.h"
+#include "freetraffic.h"
 
 #ifdef BGP
 #include "bgp.h"
+#endif
+
+#ifdef FREETRAFFIC
+#include "freetraffic.h"
 #endif
 
 // Globals
@@ -193,6 +198,7 @@ ippoolt *ip_address_pool[256][256];	// Array of dynamic IP addresses.
 static uint32_t ip_pool_size[256][256];	// Size of the pool of addresses used for dynamic address allocation.
 
 ip_filtert *ip_filters = NULL;		// Array of named filters.
+
 static controlt *controlfree = 0;
 struct Tstats *_statistics = NULL;
 #ifdef RINGBUFFER
@@ -1211,6 +1217,16 @@ static void processipout(uint8_t *buf, int len)
 	if (sp->snoop_ip && sp->snoop_port)
 		snoop_send_packet(buf, len, sp->snoop_ip, sp->snoop_port);
 
+#ifdef FREETRAFFIC
+	if (sp->free_traffic) {
+		if (free_traffic(sp->free_traffic, buf, len)) {
+			increment_counter(&sp->fcout, &sp->fcout_wrap, len); // byte count
+			sp->fcout_delta += len;
+			sess_local[s].fcout += len;	// To send to master..
+		}
+	}
+#endif //FREETRAFFIC
+
 	increment_counter(&sp->cout, &sp->cout_wrap, len); // byte count
 	sp->cout_delta += len;
 	sp->pout++;
@@ -1322,6 +1338,16 @@ static void processipv6out(uint8_t * buf, int len)
 	if (sp->snoop_ip && sp->snoop_port)
 		snoop_send_packet(buf, len, sp->snoop_ip, sp->snoop_port);
 
+#ifdef FREETRAFFIC
+	if (sp->free_traffic) {
+		if (free_traffic(sp->free_traffic, buf, len)) {
+			increment_counter(&sp->fcout, &sp->fcout_wrap, len); // byte count
+			sp->fcout_delta += len;
+			sess_local[s].fcout += len;	// To send to master..
+		}
+	}
+#endif //FREETRAFFIC
+
 	increment_counter(&sp->cout, &sp->cout_wrap, len); // byte count
 	sp->cout_delta += len;
 	sp->pout++;
@@ -1373,6 +1399,16 @@ static void send_ipout(sessionidt s, uint8_t *buf, int len)
 	// Snooping this session.
 	if (sp->snoop_ip && sp->snoop_port)
 		snoop_send_packet(buf, len, sp->snoop_ip, sp->snoop_port);
+
+#ifdef FREETRAFFIC
+	if (sp->free_traffic) {
+		if (free_traffic(sp->free_traffic, buf, len)) {
+			increment_counter(&sp->fcout, &sp->fcout_wrap, len); // byte count
+			sp->fcout_delta += len;
+			sess_local[s].fcout += len;	// To send to master..
+		}
+	}
+#endif //FREETRAFFIC
 
 	increment_counter(&sp->cout, &sp->cout_wrap, len); // byte count
 	sp->cout_delta += len;
@@ -3820,6 +3856,11 @@ static void initdata(int optdebug, char *optconfig)
 	}
 	memset(ip_filters, 0, sizeof(ip_filtert) * MAXFILTER);
 
+#ifdef FREETRAFFIC
+	memset(freetraffic_zone_sizes,(int) NULL,256*256);
+        memset(freetraffic_zones,0,256*256);
+#endif
+
 	if (!(cli_session_actions = shared_malloc(sizeof(struct cli_session_actions) * MAXSESSION)))
 	{
 		LOG(0, 0, 0, "Error doing malloc for cli session actions: %s\n", strerror(errno));
@@ -4335,6 +4376,7 @@ static int dump_session(FILE **f, sessiont *s)
 		}
 	}
 
+
 	LOG(4, 0, 0, "Dumping accounting information for %s\n", s->user);
 
         // The memory is zero filled on initalization so this is safe.
@@ -4359,6 +4401,37 @@ static int dump_session(FILE **f, sessiont *s)
 			(uint32_t) s->cout_delta,				// downrxoctets
 			(uint32_t) (now - s->last_dump));                       // time_used
 	}
+
+
+#ifdef FREETRAFFIC
+	if (s->free_traffic) {
+		char ft_filename[1024]; 
+		char ft_timestr[64];
+		FILE *ft = NULL;
+
+		strftime(ft_timestr, sizeof(ft_timestr), "%Y%m%d%H%M%S", localtime(&now));
+		snprintf(ft_filename, sizeof(ft_filename), "%s.%s/%s", config->freetraffic_accounting_dir, s->free_traffic, ft_timestr);
+		
+		if (!(ft = fopen(ft_filename, "w")))
+		{
+			LOG(0, 0, 0, "Can't write accounting info to %s: %s\n", ft_filename, strerror(errno));
+			return 0;
+		}
+
+		fprintf(ft, "%s %s %d %u %u\n",
+			s->user,						// username
+			fmtaddr(htonl(s->ip), 0),				// ip
+			(s->throttle_in || s->throttle_out) ? 2 : 1,		// qos
+			(uint32_t) s->fcin_delta,				// freetraffictxoctets
+			(uint32_t) s->fcout_delta,				// freetrafficrxoctets
+			(uint32_t) (now - s->last_dump));                       // time_used
+
+		fclose(ft);
+
+		//Zero the counters
+		s->fcin_delta = s->fcout_delta = 0;
+	}
+#endif
 	s->cin_delta = s->cout_delta = 0;
 
         s->last_dump = now;
@@ -4500,6 +4573,9 @@ int main(int argc, char *argv[])
             initippool(x,y);
           }
         }
+#ifdef FREETRAFFIC
+	initfreenetworks();
+#endif
 
 	// seed prng
 	{

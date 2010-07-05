@@ -651,6 +651,12 @@ void processrad(uint8_t *buf, int len, char socket_index)
                                                         session[s].pool_id[1] = (char) *(p+9);
                                                         LOG(3, s, session[s].tunnel, "Alternate pool %c%c for session\n",session[s].pool_id[0],session[s].pool_id[1]);
                                                 }
+                                                else if (vendor == 1337 && attrib ==4)
+                                                {
+                                                        session[s].free_traffic[0] = (char) *(p+8);
+                                                        session[s].free_traffic[1] = (char) *(p+9);
+							LOG(3, s, session[s].tunnel, "Free traffic zone %c%c configured for session\n",session[s].free_traffic[0],session[s].free_traffic[1]);
+                                                }
 						else
 						{
 							LOG(3, s, session[s].tunnel, "      Unknown vendor-specific\n");

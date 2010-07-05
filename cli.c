@@ -34,6 +34,9 @@ char const *cvs_id_cli = "$Id: cli.c,v 1.71 2005/12/06 09:43:42 bodea Exp $";
 #ifdef BGP
 #include "bgp.h"
 #endif
+#ifdef FREETRAFFIC
+#include "freetraffic.h"
+#endif
 
 extern tunnelt *tunnel;
 extern sessiont *session;
@@ -129,6 +132,12 @@ static int cmd_filter(struct cli_def *cli, char *command, char **argv, int argc)
 static int cmd_no_filter(struct cli_def *cli, char *command, char **argv, int argc);
 static int cmd_show_access_list(struct cli_def *cli, char *command, char **argv, int argc);
 
+#ifdef FREETRAFFIC
+static int cmd_show_free_networks(struct cli_def *cli, char *command, char **argv, int argc);
+static int cmd_add_free_network(struct cli_def *cli, char *command, char **argv, int argc);
+static int cmd_remove_free_network(struct cli_def *cli, char *command, char **argv, int argc);
+#endif
+
 /* match if b is a substr of a */
 #define MATCH(a,b) (!strncmp((a), (b), strlen(b)))
 
@@ -165,6 +174,9 @@ void init_cli(char *hostname)
 	cli_register_command(cli, c, "users", cmd_show_users, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "Show a list of all connected users or details of selected user");
 	cli_register_command(cli, c, "version", cmd_show_version, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "Show currently running software version");
 	cli_register_command(cli, c, "access-list", cmd_show_access_list, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "Show named access-list");
+#ifdef FREETRAFFIC
+	cli_register_command(cli, c, "free-networks", cmd_show_free_networks, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "Show a list of all networks billed as free traffic zones.");
+#endif //FREETRAFFIC
 
 	c2 = cli_register_command(cli, c, "histogram", NULL, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, NULL);
 	cli_register_command(cli, c2, "idle", cmd_show_hist_idle, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "Show histogram of session idle times");
@@ -241,6 +253,11 @@ void init_cli(char *hostname)
 	c = cli_register_command(cli, NULL, "no", NULL, PRIVILEGE_UNPRIVILEGED, MODE_CONFIG, NULL);
 	c2 = cli_register_command(cli, c, "ip", NULL, PRIVILEGE_PRIVILEGED, MODE_CONFIG, NULL);
 	cli_register_command(cli, c2, "access-list", cmd_no_ip_access_list, PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Remove named access-list");
+
+#ifdef FREETRAFFIC
+	cli_register_command(cli, NULL, "add-free-network", cmd_add_free_network, PRIVILEGE_PRIVILEGED, MODE_EXEC, "Add a new network to the free traffic zones.");
+	cli_register_command(cli, NULL, "remove-free-network", cmd_remove_free_network, PRIVILEGE_PRIVILEGED, MODE_EXEC, "Remove a network from the free traffic zones.");
+#endif
 
 	// Enable regular processing
 	cli_regular(cli, regular_stuff);
@@ -3229,3 +3246,77 @@ static int cmd_show_access_list(struct cli_def *cli, char *command, char **argv,
 
 	return CLI_OK;
 }
+
+#ifdef FREETRAFFIC
+static int cmd_show_free_networks(struct cli_def *cli, char *command, char **argv, int argc)
+{
+	free_networkt *net;
+	int x,y;
+	int i;
+
+	if (CLI_HELP_REQUESTED)
+		return CLI_HELP_NO_ARGS;
+
+	//Now print out all of the free networks
+	cli_print(cli, "%-4s %-32s %-32s", "Name", "Start Host", "Netmask");
+
+	for (x = 0; x<256;x++) {
+		for (y = 0; y<256;y++) {
+			int free_network_zone_size = freetraffic_zone_sizes[x][y];
+			for (i=0; i < free_network_zone_size; i++) {
+				net = &freetraffic_zones[x][y][i];
+				cli_print(cli, "%c%c   %-32s %-32s", x, y, fmtaddr(htonl(net->host), 0), fmtaddr(htonl(net->mask), 1));
+			}
+		}
+	}
+	return CLI_OK;
+}
+
+static int cmd_add_free_network(struct cli_def *cli, char *command, char **argv, int argc)
+{
+	if (CLI_HELP_REQUESTED)
+		return cli_arg_help(cli, argc > 3,
+			       	    "NAME", "Name of Free Traffic Zone",	
+				    "HOSTIP", "Starting IP of network",
+				    "NETMASK", "Network mask",
+				    NULL);
+
+	if (argc < 3)
+	{
+		cli_error(cli, "Please specify a name, host address, and netmask.");
+		return CLI_OK;
+	}
+
+	//FIXME: Add checking of zone string.
+
+	add_free_network(argv[0], htonl(inet_addr(argv[1])), htonl(inet_addr(argv[2])));
+
+	return CLI_OK;
+}
+
+static int cmd_remove_free_network(struct cli_def *cli, char *command, char **argv, int argc)
+{
+
+	if (CLI_HELP_REQUESTED)
+		return cli_arg_help(cli, argc > 3, 
+			       	    "NAME", "Name of Free Traffic Zone",	
+				    "HOSTIP", "Starting IP of network",
+				    "NETMASK", "Network mask",
+				    NULL);
+
+	if (argc < 3)
+	{
+		cli_error(cli, "Please specify a name, host address, and netmask.");
+		return CLI_OK;
+	}
+	
+	//FIXME: Add checking of zone string.
+
+	if (remove_free_network(argv[0], htonl(inet_addr(argv[1])), htonl(inet_addr(argv[2]))))
+		return CLI_OK;
+
+	cli_error(cli, "That free network was not found. Try using show free-networks first.");
+
+	return CLI_OK;
+}
+#endif //freetraffic

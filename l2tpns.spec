@@ -5,7 +5,7 @@
 %define svn_revision 3011
 
 # Release counter
-%define rpm_release 1
+%define rpm_release 1.freetraffic.beta
 
 
 Summary: A high-speed clustered L2TP LNS
@@ -61,6 +61,7 @@ rm -rf %{buildroot}-svn
 %config(noreplace) /etc/l2tpns/users
 %config(noreplace) /etc/l2tpns/startup-config
 %config(noreplace) /etc/l2tpns/ip_pool
+%config(noreplace) /etc/l2tpns/free_networks
 %attr(755,root,root) /usr/sbin/*
 %attr(755,root,root) /usr/lib/l2tpns
 %attr(644,root,root) /usr/share/man/man[58]/*

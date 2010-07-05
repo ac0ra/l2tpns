@@ -13,6 +13,9 @@ char const *cvs_id_ppp = "$Id: ppp.c,v 1.99.2.1 2006/05/26 07:33:52 bodea Exp $"
 #include "util.h"
 #include "tbf.h"
 #include "cluster.h"
+#ifdef FREETRAFFIC
+#include "freetraffic.h"
+#endif
 
 extern tunnelt *tunnel;
 extern sessiont *session;
@@ -1521,6 +1524,17 @@ void processipin(sessionidt s, tunnelidt t, uint8_t *p, uint16_t l)
 		snoop_send_packet(p, l, session[s].snoop_ip, session[s].snoop_port);
 	}
 
+
+	//Determine whether the ip in this packet matches a free traffic filter
+	//and add it to our totals.
+#ifdef FREETRAFFIC
+	if (free_traffic(session[s].free_traffic, p, l)) {
+		increment_counter(&session[s].fcin, &session[s].fcin_wrap, l);
+		session[s].fcin_delta += l;
+		sess_local[s].fcin += l;
+	}
+#endif //FREETRAFFIC
+
 	increment_counter(&session[s].cin, &session[s].cin_wrap, l);
 	session[s].cin_delta += l;
 	session[s].pin++;
@@ -1617,6 +1631,14 @@ void processipv6in(sessionidt s, tunnelidt t, uint8_t *p, uint16_t l)
 		snoop_send_packet(p, l, session[s].snoop_ip, session[s].snoop_port);
 	}
 
+#ifdef FREETRAFFIC
+	if (free_traffic(session[s].free_traffic, p, l)) {
+		increment_counter(&session[s].fcin, &session[s].fcin_wrap, l);
+		session[s].fcin_delta += l;
+		sess_local[s].fcin += l;
+	}
+#endif //FREETRAFFIC
+
 	increment_counter(&session[s].cin, &session[s].cin_wrap, l);
 	session[s].cin_delta += l;
 	session[s].pin++;
@@ -1655,6 +1677,14 @@ void send_ipin(sessionidt s, uint8_t *buf, int len)
 		// Snooping this session
 		snoop_send_packet(buf, len, session[s].snoop_ip, session[s].snoop_port);
 	}
+
+#ifdef FREETRAFFIC
+	if (free_traffic(session[s].free_traffic, buf, len)) {
+		increment_counter(&session[s].fcin, &session[s].fcin_wrap, len);
+		session[s].fcin_delta += len;
+		sess_local[s].fcin += len;
+	}
+#endif //FREETRAFFIC
 
 	// Increment packet counters
 	increment_counter(&session[s].cin, &session[s].cin_wrap, len);

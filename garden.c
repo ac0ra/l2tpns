@@ -265,6 +265,11 @@ int garden_session(sessiont *s, int flag, char *newuser)
 	}
 
 	/* Clean up counters */
+#ifdef FREETRAFFIC
+	s->fcin = s->fcout = 0;
+	s->fcin_delta = s->fcout_delta = 0;
+	s->fcin_wrap = s->fcout_wrap = 0;
+#endif //freetraffic
 	s->pin = s->pout = 0;
 	s->cin = s->cout = 0;
 	s->cin_delta = s->cout_delta = 0;

@@ -26,7 +26,7 @@ INSTALL = install -c -D
 l2tpns.LIBS = -lm -lcli -ldl
 
 OBJS = arp.o cli.o cluster.o constants.o control.o icmp.o l2tpns.o \
-    ll.o md5.o ppp.o radius.o tbf.o util.o
+    ll.o md5.o ppp.o radius.o tbf.o util.o freetraffic.o
 
 PROGRAMS = l2tpns nsctl
 PLUGINS = appendrealm.so autosnoop.so autothrottle.so clitousername.so \
@@ -36,6 +36,7 @@ PLUGINS = appendrealm.so autosnoop.so autothrottle.so clitousername.so \
 DEFINES += -DSTATISTICS
 DEFINES += -DSTAT_CALLS
 DEFINES += -DRINGBUFFER
+DEFINES += -DFREETRAFFIC
 
 ifneq (2.4, $(shell uname -r | perl -pe 's/^(\d+\.\d+).*/$$1/'))
  DEFINES += -DHAVE_EPOLL
@@ -139,5 +140,6 @@ garden.so: garden.c l2tpns.h plugin.h control.h
 sessionctl.so: sessionctl.c l2tpns.h plugin.h control.h
 setrxspeed.so: setrxspeed.c l2tpns.h plugin.h
 snoopctl.so: snoopctl.c l2tpns.h plugin.h control.h
+freetraffic.o: freetraffic.c freetraffic.h l2tpns.h util.h
 stripdomain.so: stripdomain.c l2tpns.h plugin.h
 throttlectl.so: throttlectl.c l2tpns.h plugin.h control.h

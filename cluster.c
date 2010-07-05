@@ -654,6 +654,16 @@ void cluster_check_master(void)
 		if (session[i].die) session[i].die = TIME;
 
 			// Accumulate un-sent byte/packet counters.
+
+		//Free traffic code here!
+#ifdef FREETRAFFIC
+		increment_counter(&session[i].fcin, &session[i].fcin_wrap, sess_local[i].fcin);
+		increment_counter(&session[i].fcout, &session[i].fcout_wrap, sess_local[i].fcout);
+		session[i].fcin_delta += sess_local[i].fcin;
+		session[i].fcout_delta += sess_local[i].fcout;
+		sess_local[i].fcin = sess_local[i].fcout = 0;
+#endif //Freetraffic
+
 		increment_counter(&session[i].cin, &session[i].cin_wrap, sess_local[i].cin);
 		increment_counter(&session[i].cout, &session[i].cout_wrap, sess_local[i].cout);
 		session[i].cin_delta += sess_local[i].cin;
