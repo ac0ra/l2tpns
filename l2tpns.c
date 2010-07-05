@@ -50,7 +50,6 @@ char const *cvs_id_l2tpns = "$Id: l2tpns.c,v 1.161.2.1 2006/06/22 15:30:50 bodea
 #include "control.h"
 #include "util.h"
 #include "tbf.h"
-#include "freetraffic.h"
 
 #ifdef BGP
 #include "bgp.h"
@@ -4418,7 +4417,7 @@ static int dump_session(FILE **f, sessiont *s)
 			return 0;
 		}
 
-		fprintf(ft, "%s %s %d %u %u\n",
+		fprintf(ft, "%s %s %d %u %u %u\n",
 			s->user,						// username
 			fmtaddr(htonl(s->ip), 0),				// ip
 			(s->throttle_in || s->throttle_out) ? 2 : 1,		// qos

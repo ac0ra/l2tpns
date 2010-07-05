@@ -26,7 +26,7 @@ be free traffic.
 // and a pointer to a linked list.
 
 free_networkt *freetraffic_zones[256][256];
-static uint32_t freetraffic_zone_sizes[256][256];	// Amount used of freetraffic zones.
+uint32_t freetraffic_zone_sizes[256][256];	// Amount used of freetraffic zones.
 
 int free_traffic(char* zone, uint8_t *buf, int len) 
 {
@@ -35,6 +35,7 @@ int free_traffic(char* zone, uint8_t *buf, int len)
 	free_networkt *network;
 	int i;
 	int free_network_zone_size;
+	int x,y;
 
 	if (len < 20) // up to end of destination address
 		return 0;
@@ -45,9 +46,12 @@ int free_traffic(char* zone, uint8_t *buf, int len)
 	src_ip = *(in_addr_t *) (buf + 12);
 	dst_ip = *(in_addr_t *) (buf + 16);
 
-	free_network_zone_size = freetraffic_zone_sizes[zone[0]][zone[1]];
+	x = (int)zone[0];
+	y = (int)zone[1];
+
+	free_network_zone_size = freetraffic_zone_sizes[x][y];
 	for (i=0; i < free_network_zone_size; i++) {
-		network = free_traffic_zones[zone[0]][zone[1]][i];
+		network = &freetraffic_zones[x][y][i];
 		if ((dst_ip & network->mask) == (network->host & network->mask))
 			return 1;
 	}
@@ -56,27 +60,37 @@ int free_traffic(char* zone, uint8_t *buf, int len)
 
 void add_free_network(char* zone, in_addr_t host, in_addr_t mask) 
 {
-	free_networkt new_network;
+	int x,y;
+	free_networkt *new_network;
 
-	if (!freetraffic_zone_sizes[zone[0]][zone[1]]) {
-		free_traffic_zones[zone[0]][zone[1]] = shared_malloc(sizeof(free_networkt) * MAXFREENETWORKS);
+	x = (int)zone[0];
+	y = (int)zone[1];
+
+	if (!freetraffic_zone_sizes[x][y]) {
+		freetraffic_zones[x][y] = shared_malloc(sizeof(free_networkt) * MAXFREENETWORKS);
 	}
+	new_network = &freetraffic_zones[x][y][freetraffic_zone_sizes[x][y]++]; //post increment counter
 
 	// Do a bitwise AND here to provide a real starting address
-	new_network.host = host & mask;
-	new_network.mask = mask;
+	new_network->host = host & mask;
+	new_network->mask = mask;
 
-	free_traffic_zones[zone[0]][zone[1]][freetraffic_zone_sizes[zone[0]][zone[1]]++] = new_network; //post increment counter
 }
 
 int remove_free_network(char* zone, in_addr_t host, in_addr_t mask)
 {
+	int x,y;
+	int i;
+	x = (int)zone[0];
+	y = (int)zone[1];
+	int free_network_zone_size;
+	free_networkt *network;
 
-	free_network_zone_size = freetraffic_zone_sizes[zone[0]][zone[1]];
+	free_network_zone_size = freetraffic_zone_sizes[x][y];
 	for (i=0; i < free_network_zone_size; i++) {
-		network = free_traffic_zones[zone[0]][zone[1]][i];
-		if ((dst_ip & network->mask) == (network->host & network->mask))
-			free_traffic_zones[zone[0]][zone[1]][freetraffic_zone_sizes[zone[0]][zone[1]]--] = NULL; //post-decrement counter
+		network = &freetraffic_zones[x][y][i];
+		if ((host & network->mask) == (network->host & network->mask))
+			memset(&freetraffic_zones[x][y][freetraffic_zone_sizes[x][y]--], 0, sizeof(free_networkt)); //post-decrement
 	}
 
 	return 0;
@@ -87,7 +101,7 @@ void initfreenetworks()
 	int x,y;
 	for (x = 0; x<256;x++) {
 		for (y = 0; y<256;y++) {
-			memset(freetraffic_zones[x][y], 0, sizeof(free_traffic_zones[x][y]));
+			memset(freetraffic_zones[x][y], 0, sizeof(freetraffic_zones[x][y]));
 			initfreenetwork(x,y);
 		}
 	}
@@ -115,8 +129,6 @@ void initfreenetwork(uint8_t x, uint8_t y) {
 		exit(1);
 	}
 
-	freetraffic_zones[x][y] = ll_init();
-	
 	while (fgets(buf, 4096, f))
 	{
 		char *pool = buf;

@@ -16,7 +16,7 @@ typedef struct
 extern free_networkt *freetraffic_zones[256][256];	// Array of free traffic networks.
 							// Configured same way as ip pools.
 
-static uint32_t freetraffic_zone_sizes[256][256];	// Amount used of freetraffic zones.
+extern uint32_t freetraffic_zone_sizes[256][256];	// Amount used of freetraffic zones.
 
 
 void add_free_network(char *zone, in_addr_t host, in_addr_t mask);
