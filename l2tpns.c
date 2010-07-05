@@ -4307,18 +4307,32 @@ static int dump_session(FILE **f, sessiont *s)
 			LOG(0, 0, 0, "Can't write accounting info to %s: %s\n", filename, strerror(errno));
 			return 0;
 		}
-
-		LOG(3, 0, 0, "Dumping accounting information to %s\n", filename);
-		fprintf(*f, "# dslwatch.pl dump file V1.01\n"
-			"# host: %s\n"
-			"# endpoint: %s\n"
-			"# time: %ld\n"
-			"# uptime: %ld\n"
-			"# format: username ip qos uptxoctets downrxoctets usage_interval\n",
-			hostname,
-			fmtaddr(config->bind_address ? config->bind_address : my_address, 0),
-			now,
-			now - basetime);
+		
+		if (s->walled_garden) {
+			LOG(3, 0, 0, "Dumping accounting information to %s\n", filename);
+			fprintf(*f, "# dslwatch.pl dump file V1.01\n"
+				"# host: %s\n"
+				"# endpoint: %s\n"
+				"# time: %ld\n"
+				"# uptime: %ld\n"
+				"# format: username ip qos uptxoctets downrxoctets usage_interval walled_garden\n",
+				hostname,
+				fmtaddr(config->bind_address ? config->bind_address : my_address, 0),
+				now,
+				now - basetime);
+		} else {
+			LOG(3, 0, 0, "Dumping accounting information to %s\n", filename);
+			fprintf(*f, "# dslwatch.pl dump file V1.01\n"
+				"# host: %s\n"
+				"# endpoint: %s\n"
+				"# time: %ld\n"
+				"# uptime: %ld\n"
+				"# format: username ip qos uptxoctets downrxoctets usage_interval\n",
+				hostname,
+				fmtaddr(config->bind_address ? config->bind_address : my_address, 0),
+				now,
+				now - basetime);
+		}
 	}
 
 	LOG(4, 0, 0, "Dumping accounting information for %s\n", s->user);
@@ -4327,13 +4341,24 @@ static int dump_session(FILE **f, sessiont *s)
         if (!s->last_dump)
                 s->last_dump = s->opened;
 
-	fprintf(*f, "%s %s %d %u %u %u\n",
-		s->user,						// username
-		fmtaddr(htonl(s->ip), 0),				// ip
-		(s->throttle_in || s->throttle_out) ? 2 : 1,		// qos
-		(uint32_t) s->cin_delta,				// uptxoctets
-		(uint32_t) s->cout_delta,				// downrxoctets
-                (uint32_t) (now - s->last_dump));                       // time_used
+	if (s->walled_garden) {
+	fprintf(*f, "%s %s %d %u %u %u %s\n",
+			s->user,						// username
+			fmtaddr(htonl(s->ip), 0),				// ip
+			(s->throttle_in || s->throttle_out) ? 2 : 1,		// qos
+			(uint32_t) s->cin_delta,				// uptxoctets
+			(uint32_t) s->cout_delta,				// downrxoctets
+			(uint32_t) (now - s->last_dump),
+			s->walled_garden_name);		                        // walled garden name 
+	} else {
+		fprintf(*f, "%s %s %d %u %u %u\n",
+			s->user,						// username
+			fmtaddr(htonl(s->ip), 0),				// ip
+			(s->throttle_in || s->throttle_out) ? 2 : 1,		// qos
+			(uint32_t) s->cin_delta,				// uptxoctets
+			(uint32_t) s->cout_delta,				// downrxoctets
+			(uint32_t) (now - s->last_dump));                       // time_used
+	}
 	s->cin_delta = s->cout_delta = 0;
 
         s->last_dump = now;
