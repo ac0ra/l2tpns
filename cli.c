@@ -454,7 +454,7 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 			//Handle IP-Pools
 			if (session[s].pool_id[0] == 0 || session[s].pool_id[1] == 0)
 			{
-                          cli_print(cli, "\tIP Pool:\tDefault", session[s].walled_garden_name);
+                          cli_print(cli, "\tIP Pool:\tDefault");
 			} else if (0 == ip_address_pool[(uint8_t)session[s].pool_id[0]][(uint8_t)session[s].pool_id[1]])
 			{
 			  cli_print(cli, "\tIP Pool:\tDefault (Requested %c%c)", session[s].pool_id[0], session[s].pool_id[1]);
