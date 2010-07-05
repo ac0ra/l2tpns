@@ -514,7 +514,7 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 	}
 
 	// Show Summary
-	cli_print(cli, "%5s %4s %-32s %-15s %s %s %s %s %-32s %10s %10s %10s %4s %-15s %s",
+	cli_print(cli, "%5s %4s %-32s %-15s %s %s %s %s %-32s %-16s %10s %10s %10s %4s %-15s %s",
 			"SID",
 			"TID",
 			"Username",
@@ -523,7 +523,8 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 			"T",
 			"G",
 			"6",
-			"WGardname",
+			"WGardenName",
+			"ThrottleSpeed",
 			"opened",
 			"downloaded",
 			"uploaded",
@@ -534,7 +535,14 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 	for (i = 1; i < MAXSESSION; i++)
 	{
 		if (!session[i].opened) continue;
-		cli_print(cli, "%5d %4d %-32s %-15s %s %s %s %s %10u %10lu %10lu %4u %-15s %s",
+		
+		int t = (session[s].throttle_in || session[s].throttle_out);  //req for showing throttle speed
+		char[50] tspeed;
+		if (t) {
+			sprintf(&tspeed, "%.0dkbps/%.0dkbps", session[s].throttle_in, session[s].throttle_out);
+		}
+
+		cli_print(cli, "%5d %4d %-32s %-15s %s %s %s %s %-32s %-16s %10u %10lu %10lu %4u %-15s %s",
 				i,
 				session[i].tunnel,
 				session[i].user[0] ? session[i].user : "*",
@@ -542,8 +550,9 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 				(session[i].snoop_ip && session[i].snoop_port) ? "Y" : "N",
 				(session[i].throttle_in || session[i].throttle_out) ? "Y" : "N",
 				(session[i].walled_garden) ? "Y" : "N",
-				(session[i].walled_garden) ? session[i].walled_garden_name : "N/A",
 				(session[i].ppp.ipv6cp == Opened) ? "Y" : "N",
+				(session[i].walled_garden && session[i].walled_garden_name) ? session[i].walled_garden_name : "N/A",
+				t ? tspeed : "N/A";
 				abs(time_now - (unsigned long)session[i].opened),
 				(unsigned long)session[i].cout,
 				(unsigned long)session[i].cin,
