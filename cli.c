@@ -391,6 +391,7 @@ int cli_arg_help(struct cli_def *cli, int cr_ok, char *entry, ...)
 static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int argc)
 {
 	int i;
+	char *tspeed = malloc(MAXGARDEN);
 
 	if (CLI_HELP_REQUESTED)
 		return cli_arg_help(cli, 1,
@@ -537,9 +538,8 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 		if (!session[i].opened) continue;
 		
 		int t = (session[i].throttle_in || session[i].throttle_out);  //req for showing throttle speed
-		char tspeed[50];
 		if (t) {
-			sprintf(&tspeed, "%.0dkbps/%.0dkbps", session[i].throttle_in, session[i].throttle_out);
+			sprintf(tspeed, "%.0dkbps/%.0dkbps", session[i].throttle_in, session[i].throttle_out);
 		}
 
 		cli_print(cli, "%5d %4d %-32s %-15s %s %s %s %s %-32s %-16s %10u %10lu %10lu %4u %-15s %s",
@@ -552,7 +552,7 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 				(session[i].walled_garden) ? "Y" : "N",
 				(session[i].ppp.ipv6cp == Opened) ? "Y" : "N",
 				(session[i].walled_garden && session[i].walled_garden_name) ? session[i].walled_garden_name : "N/A",
-				t ? tspeed : "N/A";
+				t ? *tspeed : "N/A";
 				abs(time_now - (unsigned long)session[i].opened),
 				(unsigned long)session[i].cout,
 				(unsigned long)session[i].cin,
@@ -648,6 +648,8 @@ static int cmd_show_tunnels(struct cli_def *cli, char *command, char **argv, int
 				states[tunnel[i].state],
 				sessions);
 	}
+
+	free(tspeed);
 
 	return CLI_OK;
 }
