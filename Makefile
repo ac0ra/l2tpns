@@ -82,6 +82,8 @@ install: all
 	$(INSTALL) -m 0644 Docs/l2tpns.8 $(DESTDIR)$(man8dir)/l2tpns.8
 	$(INSTALL) -m 0644 Docs/nsctl.8 $(DESTDIR)$(man8dir)/nsctl.8
 
+	mkdir -p $(DESTDIR)$(rundir)/{acct,gardenacct}
+
 	gzip --best --force $(DESTDIR)$(man5dir)/*.5 $(DESTDIR)$(man8dir)/*.8
 
 	@for config in startup-config users ip_pool; \
