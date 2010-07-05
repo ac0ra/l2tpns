@@ -43,6 +43,7 @@ set radius_secret "secret"
 
 # Write usage accounting files into specified directory
 set accounting_dir "/var/run/l2tpns/acct"
+set garden_accounting_dir "/var/run/l2tpns/gardenacct"
 
 # Listen address for L2TP
 #set bind_address 1.1.1.1

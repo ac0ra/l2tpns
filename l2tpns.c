@@ -133,6 +133,7 @@ config_descriptt config_values[] = {
 	CONFIG("throttle_speed", rl_rate, UNSIGNED_LONG),
 	CONFIG("throttle_buckets", num_tbfs, INT),
 	CONFIG("accounting_dir", accounting_dir, STRING),
+	CONFIG("garden_accounting_dir", garden_accounting_dir, STRING),
 	CONFIG("setuid", target_uid, INT),
 	CONFIG("dump_speed", dump_speed, BOOL),
 	CONFIG("multi_read_count", multi_read_count, INT),
@@ -4283,8 +4284,9 @@ static int dump_session(FILE **f, sessiont *s)
 {
 	LOG(5, 0, 0, "Method dump_session: precondition dump:\n s->opened %u \n IP: %d \ncinDelta: %u \ncoutdelta: %u \nusername: %s \nwalledGardenFlag: %hx \n", s->opened, s->ip, s->cin_delta, s->cout_delta, s->user, s->walled_garden);
 	
-	if (!s->opened || !s->ip || !(s->cin_delta || s->cout_delta) || !*s->user || s->walled_garden)
+	if (!s->opened || !s->ip || !(s->cin_delta || s->cout_delta) || !*s->user)
 		return 1;
+
         time_t now = time(NULL);
 
 	if (!*f)
@@ -4293,7 +4295,12 @@ static int dump_session(FILE **f, sessiont *s)
 		char timestr[64];
 
 		strftime(timestr, sizeof(timestr), "%Y%m%d%H%M%S", localtime(&now));
-		snprintf(filename, sizeof(filename), "%s/%s", config->accounting_dir, timestr);
+
+		if (s->walled_garden) {
+			snprintf(filename, sizeof(filename), "%s/%s", config->garden_accounting_dir, timestr);
+		} else {
+			snprintf(filename, sizeof(filename), "%s/%s", config->accounting_dir, timestr);
+		}
 
 		if (!(*f = fopen(filename, "w")))
 		{

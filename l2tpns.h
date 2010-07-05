@@ -573,6 +573,7 @@ typedef struct
 	int		num_tbfs;			// number of throttle buckets
 
 	char		accounting_dir[128];
+	char		garden_accounting_dir[128];
 	in_addr_t	bind_address;
 	in_addr_t	peer_address;
 	int		send_garp;			// Set to true to garp for vip address on startup
