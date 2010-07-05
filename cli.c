@@ -552,7 +552,7 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 				(session[i].walled_garden) ? "Y" : "N",
 				(session[i].ppp.ipv6cp == Opened) ? "Y" : "N",
 				(session[i].walled_garden && session[i].walled_garden_name) ? session[i].walled_garden_name : "N/A",
-				t ? *tspeed : "N/A";
+				(t) ? tspeed : "N/A",
 				abs(time_now - (unsigned long)session[i].opened),
 				(unsigned long)session[i].cout,
 				(unsigned long)session[i].cin,
@@ -560,6 +560,8 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 				fmtaddr(htonl(tunnel[ session[i].tunnel ].ip), 1),
 				session[i].calling[0] ? session[i].calling : "*");
 	}
+
+	free(tspeed);
 	return CLI_OK;
 }
 
@@ -648,8 +650,6 @@ static int cmd_show_tunnels(struct cli_def *cli, char *command, char **argv, int
 				states[tunnel[i].state],
 				sessions);
 	}
-
-	free(tspeed);
 
 	return CLI_OK;
 }
