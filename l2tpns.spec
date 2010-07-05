@@ -2,7 +2,7 @@
 %define svn_url "http://build.dev.iseek.com.au/development/internal/software/l2tpns/trunk"
 
 # SVN Version
-%define svn_revision 2983
+%define svn_revision 3011
 
 # Release counter
 %define rpm_release 1
@@ -56,6 +56,8 @@ rm -rf %{buildroot}-svn
 %defattr(-,root,root)
 #%doc Changes INSTALL INTERNALS COPYING THANKS Docs/manual.html
 %dir /etc/l2tpns
+%dir /var/run/l2tpns/acct
+%dir /var/run/l2tpns/gardenacct
 %config(noreplace) /etc/l2tpns/users
 %config(noreplace) /etc/l2tpns/startup-config
 %config(noreplace) /etc/l2tpns/ip_pool
@@ -64,6 +66,11 @@ rm -rf %{buildroot}-svn
 %attr(644,root,root) /usr/share/man/man[58]/*
 
 %changelog
+* Mon Jul  5 2010 Robert McLeay <robert@iseek.com.au> 2.1.21-1.3011
+- Made CentOS 5 compliant.
+- Merged Jacob's requests for Walled Garden Name and throttle speed.
+- Fixed requirement for manual creation of accounting directories.
+
 * Tue Jun  1 2010 Thomas Guthmann <tguthmann@iseek.com.au> 2.1.21-1.2981
 - Fixed default garden name to 'garden' instead of NULL
 - Added set default_garden option
