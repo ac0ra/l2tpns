@@ -514,7 +514,7 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 	}
 
 	// Show Summary
-	cli_print(cli, "%5s %4s %-32s %-15s %s %s %s %s %10s %10s %10s %4s %-15s %s",
+	cli_print(cli, "%5s %4s %-32s %-15s %s %s %s %s %-32s %10s %10s %10s %4s %-15s %s",
 			"SID",
 			"TID",
 			"Username",
@@ -523,6 +523,7 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 			"T",
 			"G",
 			"6",
+			"WGardname",
 			"opened",
 			"downloaded",
 			"uploaded",
@@ -541,6 +542,7 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 				(session[i].snoop_ip && session[i].snoop_port) ? "Y" : "N",
 				(session[i].throttle_in || session[i].throttle_out) ? "Y" : "N",
 				(session[i].walled_garden) ? "Y" : "N",
+				(session[i].walled_garden) ? session[i].walled_garden_name : "N/A",
 				(session[i].ppp.ipv6cp == Opened) ? "Y" : "N",
 				abs(time_now - (unsigned long)session[i].opened),
 				(unsigned long)session[i].cout,
