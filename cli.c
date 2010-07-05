@@ -537,7 +537,7 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 		if (!session[i].opened) continue;
 		
 		int t = (session[i].throttle_in || session[i].throttle_out);  //req for showing throttle speed
-		char[50] tspeed;
+		char tspeed[50];
 		if (t) {
 			sprintf(&tspeed, "%.0dkbps/%.0dkbps", session[i].throttle_in, session[i].throttle_out);
 		}
