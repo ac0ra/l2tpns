@@ -19,7 +19,7 @@ URL: http://sourceforge.net/projects/l2tpns
 BuildRoot: %{_tmppath}/%{name}-%{svn_revision}-root
 Prereq: /sbin/chkconfig
 BuildRequires: libcli >= 1.8.5, subversion, libcli-devel
-Requires: libcli >= 1.8.5, subversion
+Requires: libcli >= 1.8.5
 
 %description
 l2tpns is a layer 2 tunneling protocol network server (LNS).  It

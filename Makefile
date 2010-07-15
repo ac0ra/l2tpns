@@ -5,6 +5,7 @@ libdir = /usr/lib/l2tpns
 man5dir = /usr/share/man/man5
 man8dir = /usr/share/man/man8
 statedir = /var/lib/l2tpns
+rundir = /var/run/l2tpns
 
 DEFINES =  
 DEFINES += -DLIBDIR='"$(libdir)"'
