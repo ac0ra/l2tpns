@@ -3913,6 +3913,8 @@ static void initdata(int optdebug, char *optconfig)
 }
 
 static void init_tunnel_data() {
+	int i;
+
 	memset(tunnel, 0, sizeof(tunnelt) * config->max_tunnels);
 
 	// Mark all the tunnels as undefined (waiting to be filled in by a download).
