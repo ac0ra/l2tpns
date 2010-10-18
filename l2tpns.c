@@ -3821,11 +3821,6 @@ static void initdata(int optdebug, char *optconfig)
 		LOG(0, 0, 0, "Error doing malloc for _statistics: %s\n", strerror(errno));
 		exit(1);
 	}
-	if (!(tunnel = shared_malloc(sizeof(tunnelt) * config->max_tunnels)))
-	{
-		LOG(0, 0, 0, "Error doing malloc for tunnels: %s\n", strerror(errno));
-		exit(1);
-	}
 	if (!(session = shared_malloc(sizeof(sessiont) * MAXSESSION)))
 	{
 		LOG(0, 0, 0, "Error doing malloc for sessions: %s\n", strerror(errno));
@@ -3915,6 +3910,11 @@ static void initdata(int optdebug, char *optconfig)
 static void init_tunnel_data() {
 	int i;
 
+	if (!(tunnel = shared_malloc(sizeof(tunnelt) * config->max_tunnels)))
+	{
+		LOG(0, 0, 0, "Error doing malloc for tunnels: %s\n", strerror(errno));
+		exit(1);
+	}
 	memset(tunnel, 0, sizeof(tunnelt) * config->max_tunnels);
 
 	// Mark all the tunnels as undefined (waiting to be filled in by a download).
