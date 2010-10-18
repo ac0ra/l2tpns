@@ -596,12 +596,12 @@ static int cmd_show_tunnels(struct cli_def *cli, char *command, char **argv, int
 	{
 		if (argc > 1)
 			return cli_arg_help(cli, 1,
-				"<1-%d>", MAXTUNNEL-1, "Show specific tunnel by id",
+				"<1-%d>", config->max_tunnels-1, "Show specific tunnel by id",
 				NULL);
 
 		return cli_arg_help(cli, 1,
 			"all", "Show all tunnels, including unused",
-			"<1-%d>", MAXTUNNEL-1, "Show specific tunnel by id",
+			"<1-%d>", config->max_tunnels-1, "Show specific tunnel by id",
 			NULL);
 	}
 
@@ -620,7 +620,7 @@ static int cmd_show_tunnels(struct cli_def *cli, char *command, char **argv, int
 				char s[65535] = {0};
 				unsigned int t;
 				t = atoi(argv[i]);
-				if (t <= 0 || t >= MAXTUNNEL)
+				if (t <= 0 || t >= config->max_tunnels)
 				{
 					cli_print(cli, "Invalid tunnel id \"%s\"", argv[i]);
 					continue;
@@ -654,7 +654,7 @@ static int cmd_show_tunnels(struct cli_def *cli, char *command, char **argv, int
 			"State",
 			"Sessions");
 
-	for (i = 1; i < MAXTUNNEL; i++)
+	for (i = 1; i < config->max_tunnels; i++)
 	{
 		int sessions = 0;
 		if (!show_all && (!tunnel[i].ip || tunnel[i].die)) continue;
@@ -1290,7 +1290,7 @@ static int cmd_drop_tunnel(struct cli_def *cli, char *command, char **argv, int 
 
 	if (CLI_HELP_REQUESTED)
 		return cli_arg_help(cli, argc > 1,
-			"<1-%d>", MAXTUNNEL-1, "Tunnel id to drop", NULL);
+			"<1-%d>", config->max_tunnels-1, "Tunnel id to drop", NULL);
 
 	if (!config->cluster_iam_master)
 	{
@@ -1308,9 +1308,9 @@ static int cmd_drop_tunnel(struct cli_def *cli, char *command, char **argv, int 
 
 	for (i = 0; i < argc; i++)
 	{
-		if ((t = atol(argv[i])) <= 0 || (t >= MAXTUNNEL))
+		if ((t = atol(argv[i])) <= 0 || (t >= config->max_tunnels))
 		{
-			cli_error(cli, "Invalid tunnel ID (1-%d)", MAXTUNNEL-1);
+			cli_error(cli, "Invalid tunnel ID (1-%d)", config->max_tunnels-1);
 			continue;
 		}
 

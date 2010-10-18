@@ -85,7 +85,7 @@ int cluster_init()
 	int opt;
 
 	config->cluster_undefined_sessions = MAXSESSION-1;
-	config->cluster_undefined_tunnels = MAXTUNNEL-1;
+	config->cluster_undefined_tunnels = config->max_tunnels-1;
 
 	if (!config->cluster_address)
 		return 0;
@@ -615,7 +615,7 @@ void cluster_check_master(void)
 		// Count the highest used tunnel number as well.
 		//
 	config->cluster_highest_tunnelid = 0;
-	for (i = 0, tcount = 0; i < MAXTUNNEL; ++i) {
+	for (i = 0, tcount = 0; i < config->max_tunnels; ++i) {
 		if (tunnel[i].state == TUNNELUNDEF)
 			tunnel[i].state = TUNNELFREE;
 
@@ -747,7 +747,7 @@ static void cluster_check_sessions(int highsession, int freesession_ptr, int hig
 		// Clear out defined tunnels, counting the number of
 		// undefs remaining.
 	config->cluster_undefined_tunnels = 0;
-	for (i = 1 ; i < MAXTUNNEL; ++i) {
+	for (i = 1 ; i < config->max_tunnels; ++i) {
 		if (i > hightunnel) {
 			if (tunnel[i].state == TUNNELUNDEF) tunnel[i].state = TUNNELFREE; // Defined.
 			continue;
@@ -1200,8 +1200,8 @@ static int cluster_recv_session(int more, uint8_t *p)
 
 static int cluster_recv_tunnel(int more, uint8_t *p)
 {
-	if (more >= MAXTUNNEL) {
-		LOG(0, 0, 0, "DANGER: Received a tunnel session id > MAXTUNNEL!\n");
+	if (more >= config->max_tunnels) {
+		LOG(0, 0, 0, "DANGER: Received a tunnel session id > config->max_tunnels!\n");
 		return -1;
 	}
 

@@ -17,7 +17,8 @@
 #define VERSION	"2.1.21"
 
 // Limits
-#define MAXTUNNEL	500		// could be up to 65535
+#define MAXTUNNELS  	65535	 	// We cannot support any more than 65535, so we check.
+#define DEFAULTTUNNELS 	500		// Default of 500 tunnels supported.
 #define MAXSESSION	60000		// could be up to 65535
 #define MAXTBFS		6000		// Maximum token bucket filters. Might need up to 2 * session.
 
@@ -604,6 +605,8 @@ typedef struct
 	int		lock_pages;			// Lock pages into memory.
 	int		icmp_rate;			// Max number of ICMP unreachable per second to send
 	int		max_packets;			// DoS prevention: per session limit of packets/0.1s
+	int		max_tunnels;			// Maximum number of tunnels to support. May not be
+							// higher than 65k ish.
 
 	in_addr_t	cluster_address;		// Multicast address of cluster.
 							// Send to this address to have everyone hear.

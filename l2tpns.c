@@ -116,6 +116,7 @@ config_descriptt config_values[] = {
 	CONFIG("random_device", random_device, STRING),
 	CONFIG("l2tp_secret", l2tp_secret, STRING),
 	CONFIG("l2tp_mtu", l2tp_mtu, INT),
+	CONFIG("maximum_tunnels", max_tunnels, INT),
 	CONFIG("ppp_restart_time", ppp_restart_time, INT),
 	CONFIG("ppp_max_configure", ppp_max_configure, INT),
 	CONFIG("ppp_max_failure", ppp_max_failure, INT),
@@ -1956,7 +1957,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 		STAT(tunnel_rx_errors);
 		return;
 	}
-	if (t >= MAXTUNNEL)
+	if (t >= config->max_tunnels)
 	{
 		LOG(1, s, t, "Received UDP packet with invalid tunnel ID\n");
 		STAT(tunnel_rx_errors);
@@ -3265,7 +3266,7 @@ static int still_busy(void)
 		    	int i;
 
 			LOG(1, 0, 0, "Dropping sessions and tunnels\n");
-			for (i = 1; i < MAXTUNNEL; i++)
+			for (i = 1; i < config->max_tunnels; i++)
 				if (tunnel[i].ip || tunnel[i].state)
 					tunnelshutdown(i, "L2TPNS Closing", 6, 0, 0);
 
@@ -3820,7 +3821,7 @@ static void initdata(int optdebug, char *optconfig)
 		LOG(0, 0, 0, "Error doing malloc for _statistics: %s\n", strerror(errno));
 		exit(1);
 	}
-	if (!(tunnel = shared_malloc(sizeof(tunnelt) * MAXTUNNEL)))
+	if (!(tunnel = shared_malloc(sizeof(tunnelt) * config->max_tunnels)))
 	{
 		LOG(0, 0, 0, "Error doing malloc for tunnels: %s\n", strerror(errno));
 		exit(1);
@@ -3874,7 +3875,7 @@ static void initdata(int optdebug, char *optconfig)
 	}
 	memset(cli_tunnel_actions, 0, sizeof(struct cli_tunnel_actions) * MAXSESSION);
 
-	memset(tunnel, 0, sizeof(tunnelt) * MAXTUNNEL);
+	memset(tunnel, 0, sizeof(tunnelt) * config->max_tunnels);
 	memset(session, 0, sizeof(sessiont) * MAXSESSION);
 	memset(radius, 0, sizeof(radiust) * MAXRADIUS);
 
@@ -3888,7 +3889,7 @@ static void initdata(int optdebug, char *optconfig)
 	sessionfree = 1;
 
 		// Mark all the tunnels as undefined (waiting to be filled in by a download).
-	for (i = 1; i < MAXTUNNEL; i++)
+	for (i = 1; i < config->max_tunnels; i++)
 		tunnel[i].state = TUNNELUNDEF;	// mark it as not filled in.
 
 	if (!*hostname)
@@ -4724,6 +4725,13 @@ static void update_config()
 	else if (config->l2tp_mtu < MINMTU)	config->l2tp_mtu = MINMTU;
 	else if (config->l2tp_mtu > MAXMTU)	config->l2tp_mtu = MAXMTU;
 
+	if (config->max_tunnels <= 0) {		
+		config->max_tunnels = DEFAULTTUNNELS;
+	} else if (config->max_tunnels > MAXTUNNELS) {
+		LOG(0,0,0, "Warning, cannot support more than MAXTUNNELS tunnels.\n");
+		config->max_tunnels = MAXTUNNELS;
+	}
+
 	// reset MRU/MSS globals
 	MRU = config->l2tp_mtu - L2TP_HDRS;
 	if (MRU > PPPoE_MRU)
@@ -5013,7 +5021,7 @@ int load_session(sessionidt s, sessiont *new)
 
 		// Sanity checks.
 	if (new->ip_pool_index >= MAXIPPOOL ||
-		new->tunnel >= MAXTUNNEL)
+		new->tunnel >= config->max_tunnels)
 	{
 		LOG(0, s, 0, "Strange session update received!\n");
 			// FIXME! What to do here?
@@ -5480,7 +5488,7 @@ static void processcontrol(uint8_t *buf, int len, struct sockaddr_in *addr, int 
 static tunnelidt new_tunnel()
 {
 	tunnelidt i;
-	for (i = 1; i < MAXTUNNEL; i++)
+	for (i = 1; i < config->max_tunnels; i++)
 	{
 		if (tunnel[i].state == TUNNELFREE)
 		{

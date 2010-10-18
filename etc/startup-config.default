@@ -10,6 +10,9 @@ set pid_file "/var/run/l2tpns.pid"
 # Shared secret with LAC
 set l2tp_secret "secret"
 
+# Set maximum number of tunnels
+#set maximum_tunnels 500
+
 # MTU of interface for L2TP traffic
 #set l2tp_mtu 1500
 
