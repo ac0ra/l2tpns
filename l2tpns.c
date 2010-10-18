@@ -3875,11 +3875,10 @@ static void initdata(int optdebug, char *optconfig)
 	}
 	memset(cli_tunnel_actions, 0, sizeof(struct cli_tunnel_actions) * MAXSESSION);
 
-	memset(tunnel, 0, sizeof(tunnelt) * config->max_tunnels);
 	memset(session, 0, sizeof(sessiont) * MAXSESSION);
 	memset(radius, 0, sizeof(radiust) * MAXRADIUS);
 
-		// Put all the sessions on the free list marked as undefined.
+	// Put all the sessions on the free list marked as undefined.
 	for (i = 1; i < MAXSESSION; i++)
 	{
 		session[i].next = i + 1;
@@ -3888,11 +3887,7 @@ static void initdata(int optdebug, char *optconfig)
 	session[MAXSESSION - 1].next = 0;
 	sessionfree = 1;
 
-		// Mark all the tunnels as undefined (waiting to be filled in by a download).
-	for (i = 1; i < config->max_tunnels; i++)
-		tunnel[i].state = TUNNELUNDEF;	// mark it as not filled in.
-
-	if (!*hostname)
+		if (!*hostname)
 	{
 		// Grab my hostname unless it's been specified
 		gethostname(hostname, sizeof(hostname));
@@ -3915,6 +3910,14 @@ static void initdata(int optdebug, char *optconfig)
 		exit(1);
 	}
 #endif /* BGP */
+}
+
+static void init_tunnel_data() {
+	memset(tunnel, 0, sizeof(tunnelt) * config->max_tunnels);
+
+	// Mark all the tunnels as undefined (waiting to be filled in by a download).
+	for (i = 1; i < config->max_tunnels; i++)
+		tunnel[i].state = TUNNELUNDEF;	// mark it as not filled in.
 }
 
 static int assign_ip_address(sessionidt s)
@@ -4514,8 +4517,11 @@ int main(int argc, char *argv[])
 	initdata(optdebug, optconfig);
 
 	init_cli(hostname);
+	
 	read_config_file();
 	update_config();
+
+	init_tunnel_data();
 	init_tbf(config->num_tbfs);
 
 	LOG(0, 0, 0, "L2TPNS version " VERSION "\n");
