@@ -88,7 +88,7 @@ install: all
 
 	gzip --best --force $(DESTDIR)$(man5dir)/*.5 $(DESTDIR)$(man8dir)/*.8
 
-	@for config in startup-config users ip_pool; \
+	@for config in startup-config users ip_pool free_networks; \
 	do \
 	    suffix=; \
 	    mode=0600; [ $$config = ip_pool ] && mode=0644; \
