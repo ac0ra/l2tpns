@@ -605,8 +605,8 @@ typedef struct
 	int		lock_pages;			// Lock pages into memory.
 	int		icmp_rate;			// Max number of ICMP unreachable per second to send
 	int		max_packets;			// DoS prevention: per session limit of packets/0.1s
-	int		max_tunnels;			// Maximum number of tunnels to support. May not be
-							// higher than 65k ish.
+ 	int		max_tunnels;			// Maximum number of tunnels to support. May not be
+                            // higher than 65k ish.
 
 	in_addr_t	cluster_address;		// Multicast address of cluster.
 							// Send to this address to have everyone hear.
@@ -631,7 +631,6 @@ typedef struct
 	uint64_t	cluster_table_version;		// # state changes processed by cluster
 
 	struct in6_addr ipv6_prefix;			// Our IPv6 network pool.
-
 
 	int		cluster_master_min_adv;		// Master advertises routes while the number of up to date
 							// slaves is less than this value.
