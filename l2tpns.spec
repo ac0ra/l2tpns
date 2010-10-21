@@ -1,8 +1,8 @@
 # SVN Particulars
-%define svn_url "http://build.dev.iseek.com.au/development/internal/software/l2tpns/branches/centos4"
+%define svn_url "http://build.dev.iseek.com.au/development/internal/software/l2tpns/trunk"
 
 # SVN Version
-%define svn_revision 3011
+%define svn_revision 3122
 
 # Release counter
 %define rpm_release 1.freetraffic.beta
