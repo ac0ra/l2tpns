@@ -2,7 +2,7 @@
 %define svn_url "http://build.dev.iseek.com.au/development/internal/software/l2tpns/branches/centos4"
 
 # SVN Version
-%define svn_revision 3117
+%define svn_revision 3011
 
 # Release counter
 %define rpm_release 1.freetraffic.beta
@@ -67,11 +67,6 @@ rm -rf %{buildroot}-svn
 %attr(644,root,root) /usr/share/man/man[58]/*
 
 %changelog
-* Tue Oct 18 2010 Robert McLeay <robert@iseek.com.au> 2.1.21-1.3113
-- Added support for a config file setting of maximum supported
-  tunnels. The default is 500. This is to work around poorly
-  designed Nokia GGSNs that use ridiculously high tunnel counts.
-
 * Mon Jul  5 2010 Robert McLeay <robert@iseek.com.au> 2.1.21-1.3011
 - Made CentOS 5 compliant.
 - Merged Jacob's requests for Walled Garden Name and throttle speed.
