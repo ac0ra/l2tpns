@@ -3882,7 +3882,7 @@ static void initdata(int optdebug, char *optconfig)
 	session[MAXSESSION - 1].next = 0;
 	sessionfree = 1;
 
-		if (!*hostname)
+	if (!*hostname)
 	{
 		// Grab my hostname unless it's been specified
 		gethostname(hostname, sizeof(hostname));

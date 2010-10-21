@@ -67,18 +67,16 @@ rm -rf %{buildroot}-svn
 %attr(644,root,root) /usr/share/man/man[58]/*
 
 %changelog
-<<<<<<< HEAD
+* Tue Oct 18 2010 Robert McLeay <robert@iseek.com.au> 2.1.21-1.3113
+- Added support for a config file setting of maximum supported
+  tunnels. The default is 500. This is to work around poorly
+  designed Nokia GGSNs that use ridiculously high tunnel counts.
+
 * Mon Jul  5 2010 Robert McLeay <robert@iseek.com.au> 2.1.21-1.3011
 - Made CentOS 5 compliant.
 - Merged Jacob's requests for Walled Garden Name and throttle speed.
 - Fixed requirement for manual creation of accounting directories.
 
-=======
-* Tue Oct 18 2010 Robert McLeay <robert@iseek.com.au> 2.1.21-1.3113
-- Added support for a config file setting of maximum supported
-  tunnels. The default is 500. This is to work around poorly
-  designed Nokia GGSNs that use ridiculously high tunnel counts.
->>>>>>> Added spec file
 * Tue Jun  1 2010 Thomas Guthmann <tguthmann@iseek.com.au> 2.1.21-1.2981
 - Fixed default garden name to 'garden' instead of NULL
 - Added set default_garden option
