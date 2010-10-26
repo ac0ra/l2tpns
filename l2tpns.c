@@ -4947,10 +4947,12 @@ int sessionsetup(sessionidt s, tunnelidt t)
 			if (!session[s].opened) continue;
 			if (ip == session[i].ip)
 			{
-				if (suicide_duplicate_ip) {
+				if (!config->allow_duplicate_ip) {
 					sessionkill(i, "Duplicate IP address", TERM_ADMIN_RESET);
 				} else {
-					sessionkill(s, "Duplicate IP. Suiciding", TERM_CALLBACK);
+					if (config->suicide_duplicate_ip) {
+						sessionkill(s, "Duplicate IP. Suiciding", TERM_CALLBACK);
+					}
 				}
 				continue;
 			}
