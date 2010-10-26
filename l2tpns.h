@@ -581,6 +581,8 @@ typedef struct
 	int		radius_authprefer;
 
 	int		allow_duplicate_users;		// allow multiple logins with the same username
+	int		allow_duplicate_ip;		// allow multiple logins with the same ip - fix for nokia ggsn
+	int		suicide_duplicate_ip;		// disconnect first user
 
 	in_addr_t	default_dns1, default_dns2;
 
@@ -783,7 +785,7 @@ sessionidt sessionbyipv6(struct in6_addr ip);
 sessionidt sessionbyuser(char *username);
 void increment_counter(uint32_t *counter, uint32_t *wrap, uint32_t delta);
 void random_data(uint8_t *buf, int len);
-void sessionkill(sessionidt s, char *reason);
+void sessionkill(sessionidt s, char *reason, int term_cause);
 void sessionshutdown(sessionidt s, char const *reason, int cdn_result, int cdn_error, int term_cause);
 void filter_session(sessionidt s, int filter_in, int filter_out);
 void send_garp(in_addr_t ip);

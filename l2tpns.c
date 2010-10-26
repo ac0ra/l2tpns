@@ -132,6 +132,8 @@ config_descriptt config_values[] = {
 	CONFIG("radius_authtypes", radius_authtypes_s, STRING),
 	CONFIG("radius_dae_port", radius_dae_port, SHORT),
 	CONFIG("allow_duplicate_users", allow_duplicate_users, BOOL),
+	CONFIG("allow_duplicate_ip", allow_duplicate_ip, BOOL),
+	CONFIG("sucide_duplicate_ip", suicide_duplicate_ip, BOOL),
 	CONFIG("bind_address", bind_address, IPv4),
 	CONFIG("peer_address", peer_address, IPv4),
 	CONFIG("send_garp", send_garp, BOOL),
@@ -1662,8 +1664,9 @@ void sessionshutdown(sessionidt s, char const *reason, int cdn_result, int cdn_e
 			memcpy(&shut_acct[shut_acct_n++], &session[s], sizeof(session[s]));
 	}
 
-	if (session[s].ip)
-	{                          // IP allocated, clear and unroute
+	if (session[s].ip && term_cause != TERM_CALLBACK) // Don't drop the route if it's the duplicate session 
+	{                          			  // that has 'called-back'!
+		// IP allocated, clear and unroute
 		int r;
 		int routed = 0;
 		for (r = 0; r < MAXROUTE && session[s].route[r].ip; r++)
@@ -1794,7 +1797,7 @@ static void sessionclear(sessionidt s)
 }
 
 // kill a session now
-void sessionkill(sessionidt s, char *reason)
+void sessionkill(sessionidt s, char *reason, int term_cause)
 {
 
 	CSTAT(sessionkill);
@@ -1809,8 +1812,7 @@ void sessionkill(sessionidt s, char *reason)
 	}
 
 	session[s].die = TIME;
-//	sessionshutdown(s, reason, CDN_ADMIN_DISC, TERM_ADMIN_RESET);  // close radius/routes, etc.
-	sessionshutdown(s, (reason ? reason : "Murdered!"), (reason ? 3 : 0),  0, TERM_ADMIN_RESET);  // close radius/routes, etc.
+	sessionshutdown(s, (reason ? reason : "Murdered!"), (reason ? 3 : 0),  0, term_cause);  // close radius/routes, etc.
 
 	if(!reason)
 		reason = "Murdered!";
@@ -1852,7 +1854,7 @@ static void tunnelkill(tunnelidt t, char *reason)
 	// kill sessions
 	for (s = 1; s <= config->cluster_highest_sessionid ; ++s)
 		if (session[s].tunnel == t)
-			sessionkill(s, reason);
+			sessionkill(s, reason, TERM_ADMIN_RESET);
 
 	// free tunnel
 	LOG(1, 0, t, "Kill tunnel %d [%-15s]: %s\n", t, fmtaddr(htonl(tunnel[t].ip), 0), reason);
@@ -2600,7 +2602,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 							{
 								/* Work around broken GGSN */
 								LOG(3, s, t, "Duplicate LAC session id: %d/%d established as %d/%d\n", tunnel[t].far, asession, t, s);
-								sessionkill(s, NULL);
+								sessionkill(s, NULL, TERM_ADMIN_RESET);
 								break;
 							}
 						}
@@ -2970,7 +2972,7 @@ static void regular_cleanups(double period)
 		{
 			if (session[s].die <= TIME)
 			{
-				sessionkill(s, "Expired");
+				sessionkill(s, "Expired", TERM_ADMIN_RESET);
 				s_actions++;
 			}
 			continue;
@@ -4945,14 +4947,18 @@ int sessionsetup(sessionidt s, tunnelidt t)
 			if (!session[s].opened) continue;
 			if (ip == session[i].ip)
 			{
-				sessionkill(i, "Duplicate IP address");
+				if (suicide_duplicate_ip) {
+					sessionkill(i, "Duplicate IP address", TERM_ADMIN_RESET);
+				} else {
+					sessionkill(s, "Duplicate IP. Suiciding", TERM_CALLBACK);
+				}
 				continue;
 			}
 
 			if (config->allow_duplicate_users) continue;
 			if (session[s].walled_garden || session[i].walled_garden) continue;
 			if (!strcasecmp(user, session[i].user))
-				sessionkill(i, "Duplicate session for users");
+				sessionkill(i, "Duplicate session for users", TERM_ADMIN_RESET);
 		}
 	}
 
