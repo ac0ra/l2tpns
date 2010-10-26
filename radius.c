@@ -808,7 +808,7 @@ void processrad(uint8_t *buf, int len, char socket_index)
 			else if (r_code == AccessReject)
 			{
 				LOG(2, s, session[s].tunnel, "   Authentication rejected for %s\n", session[s].user);
-				sessionkill(s, "Authentication rejected");
+				sessionkill(s, "Authentication rejected", TERM_ADMIN_RESET);
 				break;
 			}
 

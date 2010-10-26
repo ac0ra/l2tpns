@@ -260,8 +260,7 @@ int garden_session(sessiont *s, int flag, char *newuser)
 	if (s->ip && !s->die && (other = f->get_session_by_username(s->user)) &&
 	    s != f->get_session_by_id(other))
 	{
-	    f->sessionkill(other,
-		"Duplicate session when user released from walled garden");
+	    f->sessionkill(other, "Duplicate session when user released from walled garden", TERM_ADMIN_RESET);
 	}
 
 	/* Clean up counters */

@@ -60,7 +60,7 @@ int plugin_control(struct param_control *data)
     if (data->argv[0][0] == 'd')
 	f->sessionshutdown(session, reason, CDN_ADMIN_DISC, TERM_ADMIN_RESET);
     else
-	f->sessionkill(session, reason);
+	f->sessionkill(session, reason, TERM_ADMIN_RESET);
 
     data->response = NSCTL_RES_OK;
     data->additional = 0;

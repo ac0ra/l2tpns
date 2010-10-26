@@ -38,7 +38,7 @@ struct pluginfuncs
     void (*radiussend)(uint16_t r, uint8_t state);
     void *(*getconfig)(char *key, enum config_typet type);
     void (*sessionshutdown)(sessionidt s, char const *reason, int result, int error, int term_cause);
-    void (*sessionkill)(sessionidt s, char *reason);
+    void (*sessionkill)(sessionidt s, char *reason, int term_cause);
     void (*throttle)(sessionidt s, int rate_in, int rate_out);
     int (*session_changed)(int sid);
 };
