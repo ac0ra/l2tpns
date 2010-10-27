@@ -47,8 +47,8 @@
 #define MAXIPPOOL	131072		// max number of ip addresses in pool
 #define RINGBUFFER_SIZE	10000		// Number of ringbuffer entries to allocate
 #define MAX_LOG_LENGTH	512		// Maximum size of log message
-#define ECHO_TIMEOUT	60		// Time between last packet sent and LCP ECHO generation
-#define IDLE_TIMEOUT	240		// Time between last packet sent and LCP ECHO generation
+#define DEFAULT_ECHO_TIMEOUT	60	// Time between last packet sent and LCP ECHO generation
+#define DEFAULT_IDLE_TIMEOUT	240	// Time between last packet sent and LCP ECHO generation
 #define BUSY_WAIT_TIME	3000		// 5 minutes in 1/10th seconds to wait for radius to cleanup on shutdown
 
 // Constants
@@ -560,6 +560,9 @@ typedef struct
 
 	char		l2tp_secret[64];		// L2TP shared secret
 	int		l2tp_mtu;			// MTU of interface used for L2TP
+
+	int		lcp_echo_timeout;		// Timeout before sending an LCP echo
+	int		lcp_idle_timeout;		// Timeout before dropping sessions without echo
 
 	char		random_device[256];		// random device path, defaults to RANDOMDEVICE
 

@@ -13,6 +13,12 @@ set l2tp_secret "secret"
 # Set maximum number of tunnels
 #set maximum_tunnels 500
 
+# Set session timeout before sending an LCP echo (seconds)
+#set lcp_echo_timeout 60
+
+# Set session disconnect timeout if no LCP echos have been received (seconds)
+#set lcp_idle_timeout 240
+
 # MTU of interface for L2TP traffic
 #set l2tp_mtu 1500
 

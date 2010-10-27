@@ -153,6 +153,8 @@ config_descriptt config_values[] = {
 	CONFIG("cluster_mcast_ttl", cluster_mcast_ttl, INT),
 	CONFIG("cluster_hb_interval", cluster_hb_interval, INT),
 	CONFIG("cluster_hb_timeout", cluster_hb_timeout, INT),
+	CONFIG("lcp_echo_timeout", lcp_echo_timeout, INT),
+	CONFIG("lcp_idle_timeout", lcp_idle_timeout, INT),
  	CONFIG("cluster_master_min_adv", cluster_master_min_adv, INT),
 	CONFIG("ipv6_prefix", ipv6_prefix, IPv6),
 	CONFIG("append_realm", append_realm, STRING),
@@ -3090,7 +3092,7 @@ static void regular_cleanups(double period)
 		}
 
 		// Drop sessions who have not responded within IDLE_TIMEOUT seconds
-		if (session[s].last_packet && (time_now - session[s].last_packet >= IDLE_TIMEOUT))
+		if (session[s].last_packet && (time_now - session[s].last_packet >= config->lcp_idle_timeout))
 		{
 			sessionshutdown(s, "No response to LCP ECHO requests.", CDN_ADMIN_DISC, TERM_LOST_SERVICE);
 			STAT(session_timeout);
@@ -3099,8 +3101,8 @@ static void regular_cleanups(double period)
 		}
 
 		// No data in ECHO_TIMEOUT seconds, send LCP ECHO
-		if (session[s].ppp.phase >= Establish && (time_now - session[s].last_packet >= ECHO_TIMEOUT) &&
-			(time_now - sess_local[s].last_echo >= ECHO_TIMEOUT))
+		if (session[s].ppp.phase >= Establish && (time_now - session[s].last_packet >= config->lcp_echo_timeout) &&
+			(time_now - sess_local[s].last_echo >= config->lcp_echo_timeout))
 		{
 			uint8_t b[MAXETHER];
 
@@ -4727,11 +4729,22 @@ static void update_config()
 	else if (config->l2tp_mtu < MINMTU)	config->l2tp_mtu = MINMTU;
 	else if (config->l2tp_mtu > MAXMTU)	config->l2tp_mtu = MAXMTU;
 
+	// Set the number of tunnels
 	if (config->max_tunnels <= 0) {		
 		config->max_tunnels = DEFAULTTUNNELS;
 	} else if (config->max_tunnels > MAXTUNNELS) {
 		LOG(0,0,0, "Warning, cannot support more than MAXTUNNELS tunnels.\n");
 		config->max_tunnels = MAXTUNNELS;
+	}
+
+	//Set idle timeout
+	if (config->lcp_idle_timeout <= 0) {
+		config->lcp_idle_timeout = DEFAULT_IDLE_TIMEOUT;
+	}
+
+	//Set echo timeout
+	if (config->lcp_echo_timeout <= 0) {
+		config->lcp_echo_timeout = DEFAULT_ECHO_TIMEOUT;
 	}
 
 	// reset MRU/MSS globals
