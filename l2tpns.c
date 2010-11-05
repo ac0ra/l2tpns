@@ -133,7 +133,7 @@ config_descriptt config_values[] = {
 	CONFIG("radius_dae_port", radius_dae_port, SHORT),
 	CONFIG("allow_duplicate_users", allow_duplicate_users, BOOL),
 	CONFIG("allow_duplicate_ip", allow_duplicate_ip, BOOL),
-	CONFIG("sucide_duplicate_ip", suicide_duplicate_ip, BOOL),
+	CONFIG("suicide_duplicate_ip", suicide_duplicate_ip, BOOL),
 	CONFIG("bind_address", bind_address, IPv4),
 	CONFIG("peer_address", peer_address, IPv4),
 	CONFIG("send_garp", send_garp, BOOL),
