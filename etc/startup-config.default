@@ -47,8 +47,21 @@ set radius_secret "secret"
 # Port for DAE RADIUS requests
 #set radius_dae_port 3799
 
+# If you're using a broken Nokia GGSN, then the recommendations are:
+# 1) allow_duplicate_users - No (optional)
+# 2) allow_duplicate_ip - No (optional)
+# 3) suicide_duplicate_ip - *MUST* be yes.
+
 # Allow multiple logins for the same username
 #set allow_duplicate_users no
+
+# Allow the same IP to be handed to multiple sessions
+#set allow_duplicate_ip no
+
+# If we have a duplicate session, do we kill the previous session
+# and not drop the BGP-announced route for static ips? 
+#set suicide_duplicate_ip no
+
 
 # Write usage accounting files into specified directory
 set accounting_dir "/var/run/l2tpns/acct"
