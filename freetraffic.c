@@ -101,7 +101,7 @@ void initfreenetworks()
 	int x,y;
 	for (x = 0; x<256;x++) {
 		for (y = 0; y<256;y++) {
-			memset(freetraffic_zones[x][y], 0, sizeof(freetraffic_zones[x][y]));
+			memset(&freetraffic_zones[x][y], 0, sizeof(freetraffic_zones[x][y]));
 			initfreenetwork(x,y);
 		}
 	}
@@ -125,8 +125,9 @@ void initfreenetwork(uint8_t x, uint8_t y) {
 
 	if (!(f = fopen(filename, "r")))
 	{
-		LOG(0, 0, 0, "Can't load free networks file " FREETRAFFICFILE ": %s\n", strerror(errno));
-		exit(1);
+		//LOG(0, 0, 0, "Can't load free networks file " FREETRAFFICFILE ": %s\n", strerror(errno));
+		// We can't have this here, otherwise we'll spam up the logs!
+		return;
 	}
 
 	while (fgets(buf, 4096, f))
