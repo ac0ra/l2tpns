@@ -4961,7 +4961,11 @@ int sessionsetup(sessionidt s, tunnelidt t)
 			if (ip == session[i].ip)
 			{
 				if (!config->allow_duplicate_ip) {
-					sessionkill(i, "Duplicate IP address", TERM_ADMIN_RESET);
+					if (config->suicide_duplicate_ip) {
+						sessionkill(s, "Duplicate IP. Suiciding", TERM_CALLBACK);
+					} else {
+						sessionkill(i, "Duplicate IP address", TERM_ADMIN_RESET);
+					}
 				} else {
 					if (config->suicide_duplicate_ip) {
 						sessionkill(s, "Duplicate IP. Suiciding", TERM_CALLBACK);
