@@ -22,6 +22,9 @@ set l2tp_secret "secret"
 # MTU of interface for L2TP traffic
 #set l2tp_mtu 1500
 
+# MRU of the PPPoE connections from the LAC
+#set pppoe_mru 1492
+
 # PPP counter and timer values
 #set ppp_restart_time 3
 #set ppp_max_configure 10
