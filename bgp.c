@@ -45,7 +45,6 @@ static int bgp_send_keepalive(struct bgp_peer *peer);
 static int bgp_send_update(struct bgp_peer *peer);
 static int bgp_send_notification(struct bgp_peer *peer, uint8_t code,
     uint8_t subcode);
-static int compare_bgp_ip_prefixes(const void *a, const void *b);
 static uint16_t our_as;
 
 int bgp_configured = 0;
@@ -347,14 +346,14 @@ static void bgp_cidr(in_addr_t ip, in_addr_t mask, struct bgp_ip_prefix *pfx)
     }
 }
 
-/* insert route into list; sorted */
+/* insert route into list; unsorted */
 static struct bgp_route_list *bgp_insert_route(struct bgp_route_list *head,
     struct bgp_route_list *new)
 {
     struct bgp_route_list *p = head;
     struct bgp_route_list *e = 0;
 
-    while (p && memcmp(&p->dest, &new->dest, sizeof(p->dest)) < 0)
+    while (p)
     {
 	e = p;
 	p = p->next;
@@ -402,8 +401,6 @@ int bgp_add_route(in_addr_t ip, in_addr_t mask)
 			}
     }
 
-	qsort(bgp_routes,i+1,sizeof(struct bgp_ip_prefix),compare_bgp_ip_prefixes);
-
     /* flag established peers for update */
     for (i = 0; i < BGP_NUM_PEERS; i++)
 	if (bgp_peers[i].state == Established)
@@ -415,11 +412,6 @@ int bgp_add_route(in_addr_t ip, in_addr_t mask)
     return 1;
 }
 
-static int compare_bgp_ip_prefixes(const void *a, const void *b) {
-	const struct bgp_ip_prefix *bgpa = (const struct bgp_ip_prefix *) a;
-	const struct bgp_ip_prefix *bgpb = (const struct bgp_ip_prefix *) b;
-	return memcmp(bgpa, bgpb, sizeof(bgpa));
-}
 
 /* remove route from list for peers */
 int bgp_del_route(in_addr_t ip, in_addr_t mask)
@@ -456,8 +448,6 @@ int bgp_del_route(in_addr_t ip, in_addr_t mask)
 	}
 	i++;
     }
-
-	qsort(bgp_routes,i,sizeof(struct bgp_ip_prefix),compare_bgp_ip_prefixes);
 
     /* flag established peers for update */
     for (i = 0; i < BGP_NUM_PEERS; i++)
@@ -1107,6 +1097,23 @@ static int bgp_send_update(struct bgp_peer *peer)
     /* find differences */
     while ((have || want) && data < (max - sizeof(struct bgp_ip_prefix)))
     {
+
+	    /*
+	     * A bug was here.
+	     *
+	     * A race condition used to develop, where have and want are
+	     * in a different ORDER, causing memcmp to ALWAYS wish to
+	     * resend out a particular BGP announcement.
+	     *
+	     * have is equivalent to bgp_peer->routes
+	     * want is equivalent to bgp_routes
+	     *
+	     * The solution was to remove any sorting of bgp_routes
+	     * and bgp_peer->routes. Changes to bgp_add_route() and 
+	     * bgp_insert_route() were made to fix this bug.
+	     *
+	     * Rob - 14/10/2011.
+	     */
 
 	if (have)
 	    s = want

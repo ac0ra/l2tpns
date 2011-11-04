@@ -560,6 +560,7 @@ typedef struct
 
 	char		l2tp_secret[64];		// L2TP shared secret
 	int		l2tp_mtu;			// MTU of interface used for L2TP
+	int		pppoe_mru;			// PPPoE MRU value if not default constant of 1492
 
 	int		lcp_echo_timeout;		// Timeout before sending an LCP echo
 	int		lcp_idle_timeout;		// Timeout before dropping sessions without echo

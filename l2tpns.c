@@ -116,6 +116,7 @@ config_descriptt config_values[] = {
 	CONFIG("random_device", random_device, STRING),
 	CONFIG("l2tp_secret", l2tp_secret, STRING),
 	CONFIG("l2tp_mtu", l2tp_mtu, INT),
+	CONFIG("pppoe_mru", pppoe_mru, INT),
 	CONFIG("maximum_tunnels", max_tunnels, INT),
 	CONFIG("ppp_restart_time", ppp_restart_time, INT),
 	CONFIG("ppp_max_configure", ppp_max_configure, INT),
@@ -2657,7 +2658,15 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 					if (amagic == 0) amagic = time_now;
 					session[s].magic = amagic; // set magic number
 					session[s].flags = aflags; // set flags received
-					session[s].mru = PPPoE_MRU; // default
+					// PPPoE MRU logic	
+					// e.g: set pppoe_mru 1500
+					if (config->pppoe_mru > 0) {
+						session[s].mru = config->pppoe_mru;
+					} 
+					// or is unset or equal to 0 
+					else {
+						session[s].mru = PPPoE_MRU; // default
+					}
 					controlnull(t); // ack
 
 					// start LCP
@@ -4749,8 +4758,17 @@ static void update_config()
 
 	// reset MRU/MSS globals
 	MRU = config->l2tp_mtu - L2TP_HDRS;
-	if (MRU > PPPoE_MRU)
-		MRU = PPPoE_MRU;
+
+	// PPPoE MRU logic	
+	// e.g: set pppoe_mru 1500
+	if (config->pppoe_mru > 0) {
+		MRU = config->pppoe_mru;
+	} 
+	// or is unset or equal to 0 
+	else {
+		if (MRU > PPPoE_MRU)
+			MRU = PPPoE_MRU;
+	}
 
 	MSS = MRU - TCP_HDRS;
 
