@@ -24,8 +24,6 @@ char *up_commands[] = {
     "/sbin/iptables -t nat -N %s_users >/dev/null 2>&1",		// Empty chain, users added/removed by garden_session
     "/sbin/iptables -t nat -F %s_users",
     "/sbin/iptables -t nat -A PREROUTING -j %s_users",		// DNAT any users on the garden_users chain
-    "/sbin/sysctl -w net.ipv4.netfilter.ip_conntrack_max=512000"	// lots of entries
-    	     " net.ipv4.netfilter.ip_conntrack_tcp_timeout_established=18000 >/dev/null", // 5hrs
     NULL,
 };
 
@@ -221,6 +219,13 @@ int garden_session(sessiont *s, int flag, char *newuser)
 
     sess = f->get_id_by_session(s);
 
+    // Required to block inbound traffic towards garden if garden_hardened_security = 1 in startup_config
+    int *garden_hardened_security = f->getconfig("garden_hardened_security", INT);
+    char interface[16];
+    char cmd2[256];
+    if ( *garden_hardened_security != 0 ) 
+    	strcpy(interface,f->getconfig("cluster_interface", STRING));
+
     if (flag == F_GARDEN)
     {
 
@@ -233,10 +238,29 @@ int garden_session(sessiont *s, int flag, char *newuser)
 	snprintf(cmd, sizeof(cmd),
                  "/sbin/iptables -t nat -A %s_users -s %s -j %s",
                  s->walled_garden_name,
-                 f->fmtaddr(htonl(s->ip), 0), s->walled_garden_name);
+                 f->fmtaddr(htonl(s->ip), 0),
+                 s->walled_garden_name);
 
 	f->log(3, sess, s->tunnel, "%s\n", cmd);
 	system(cmd);
+
+	if ( *garden_hardened_security != 0 )
+	{
+		// HARDENING our gardens so no inbound traffic can reach a user in a garden.
+		// We want to block any incoming traffic that is not established by 10.13.10.1
+		//iptables -A FORWARD -i eth0 -d 10.13.10.1/32 -m state --state ESTABLISHED -j ACCEPT
+		//iptables -A FORWARD -i eth0 -d 10.13.10.1/32 -j DROP
+		// Tom - 31/7/13
+		snprintf(cmd2, sizeof(cmd2),
+			 "/sbin/iptables -A FORWARD -i %s -d %s/32 -m state --state ESTABLISHED -j ACCEPT && /sbin/iptables -A FORWARD -i %s -d %s/32 -j DROP",
+			 interface,
+			 f->fmtaddr(htonl(s->ip), 0),
+			 interface,
+			 f->fmtaddr(htonl(s->ip), 0));
+		f->log(3, sess, s->tunnel, "%s\n", cmd2);
+		system(cmd2);
+	}
+
 	s->walled_garden = 1;
     }
     else
@@ -281,6 +305,22 @@ int garden_session(sessiont *s, int flag, char *newuser)
              s->walled_garden_name);
 
 	f->log(3, sess, s->tunnel, "%s\n", cmd);
+
+	if ( *garden_hardened_security != 0 )
+	{
+		// Removing rules
+		//iptables -D FORWARD -i eth0 -d 10.13.10.1/32 -m state --state ESTABLISHED -j ACCEPT
+		//iptables -D FORWARD -i eth0 -d 10.13.10.1/32 -j DROP
+		// Tom - 31/7/13
+		snprintf(cmd2, sizeof(cmd2),
+			 "/sbin/iptables -D FORWARD -i %s -d %s/32 -m state --state ESTABLISHED -j ACCEPT && /sbin/iptables -D FORWARD -i %s -d %s/32 -j DROP",
+			 interface,
+			 f->fmtaddr(htonl(s->ip), 0),
+			 interface,
+			 f->fmtaddr(htonl(s->ip), 0));
+		f->log(3, sess, s->tunnel, "%s\n", cmd2);
+		system(cmd2);
+	}
 	while (--count)
 	{
 	    int status = system(cmd);

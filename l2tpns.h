@@ -654,6 +654,9 @@ typedef struct
 	char		append_realm[MAXUSER-96];	
         char            gardens[MAXGARDEN * MAXGARDENCOUNT];
 	int			default_garden;       // enable or disable default garden called 'garden'
+	int		garden_hardened_security;     // enable or disable counter-measures against inbound traffic 
+						      // towards garden. If disabled then Internet can connect to
+						      // a host in a garden even if the host cannot initate a connection
 
 } configt;
 
