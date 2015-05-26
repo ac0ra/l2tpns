@@ -24,8 +24,6 @@ char *up_commands[] = {
     "/sbin/iptables -t nat -N %s_users >/dev/null 2>&1",		// Empty chain, users added/removed by garden_session
     "/sbin/iptables -t nat -F %s_users",
     "/sbin/iptables -t nat -A PREROUTING -j %s_users",		// DNAT any users on the garden_users chain
-    "/sbin/sysctl -w net.ipv4.netfilter.ip_conntrack_max=512000"	// lots of entries
-    	     " net.ipv4.netfilter.ip_conntrack_tcp_timeout_established=18000 >/dev/null", // 5hrs
     NULL,
 };
 
@@ -43,6 +41,21 @@ char *down_commands[] = {
     NULL,
 };
 
+// Hardened garden security commands
+char *up_garden_security_commands[] = {
+    "/sbin/iptables -N garden_security >/dev/null 2>&1", // garden_security will be populate if set garden_hardened_security is set to 1
+    "/sbin/iptables -F garden_security",                 // Flush in case chain existed (copy'n'paste from what has been done in the past)
+    "/sbin/iptables -A FORWARD -j garden_security",	 // Add garden_security as a subchain of FORWARD
+    NULL,
+};
+
+char *down_garden_security_commands[] = {
+    "/sbin/iptables -F garden_security",
+    "/sbin/iptables -D FORWARD -j garden_security",
+    "/sbin/iptables -X garden_security",
+    NULL,
+};
+
 #define F_UNGARDEN	0
 #define F_GARDEN	1
 #define F_CLEANUP	2
@@ -56,12 +69,13 @@ int plugin_post_auth(struct param_post_auth *data)
     if (!data->auth_allowed)
 	{
 		int *defaultgarden = f->getconfig("default_garden", INT);
-		// if default garden is enabled then let's accept this user
-		// and throw him in the default garden otherwise... see ya
-		// Note: Backward compatibility/behaviour is broken /!\
-		//       default garden is now disabled by default. To enable
-		//       it you must explicitly set in the main configuration:
-		//         set default_garden 1 
+		/* if default garden is enabled then let's accept this user
+		 * and throw him in the default garden otherwise... see ya
+		 * Note: Backward compatibility/behaviour is broken /!\
+		 *       default garden is now disabled by default. To enable
+		 *       it you must explicitly set in the main configuration:
+		 *         set default_garden 1
+		 */
 		if (*defaultgarden != 0) 
 		{
 			f->log(3, f->get_id_by_session(data->s), data->s->tunnel,
@@ -199,6 +213,16 @@ int plugin_become_master(void)
       tok = strtok(NULL,",");
     }
 
+   // Should we create new chains to harden security in the gardens ?
+   int *garden_hardened_security = f->getconfig("garden_hardened_security", INT);
+   if ( *garden_hardened_security != 0 ) {
+      for (i = 0; up_garden_security_commands[i] && *up_garden_security_commands[i]; i++)
+      {
+         f->log(3, 0, 0, "Running %s\n", up_garden_security_commands[i]);
+         system(up_garden_security_commands[i]);
+      }
+   }
+
     return PLUGIN_RET_OK;
 }
 
@@ -221,6 +245,10 @@ int garden_session(sessiont *s, int flag, char *newuser)
 
     sess = f->get_id_by_session(s);
 
+    // Required to block inbound traffic towards garden if garden_hardened_security = 1 in startup_config
+    int *garden_hardened_security = f->getconfig("garden_hardened_security", INT);
+    char cmd2[256];
+
     if (flag == F_GARDEN)
     {
 
@@ -233,10 +261,27 @@ int garden_session(sessiont *s, int flag, char *newuser)
 	snprintf(cmd, sizeof(cmd),
                  "/sbin/iptables -t nat -A %s_users -s %s -j %s",
                  s->walled_garden_name,
-                 f->fmtaddr(htonl(s->ip), 0), s->walled_garden_name);
+                 f->fmtaddr(htonl(s->ip), 0),
+                 s->walled_garden_name);
 
 	f->log(3, sess, s->tunnel, "%s\n", cmd);
 	system(cmd);
+
+	if ( *garden_hardened_security != 0 )
+	{
+		// HARDENING our gardens so no inbound traffic can reach a user in a garden.
+		// We want to block any incoming traffic that is not established by 10.13.10.1
+		//iptables -A garden_security -o tun0 -d 10.13.10.1/32 -m state --state ESTABLISHED -j ACCEPT
+		//iptables -A garden_security -o tun0 -d 10.13.10.1/32 -j DROP
+		// Tom - 31/7/13
+		snprintf(cmd2, sizeof(cmd2),
+			 "/sbin/iptables -A garden_security -o tun0 -d %s/32 -m state --state ESTABLISHED -j ACCEPT && /sbin/iptables -A garden_security -o tun0 -d %s/32 -j DROP",
+			 f->fmtaddr(htonl(s->ip), 0),
+			 f->fmtaddr(htonl(s->ip), 0));
+		f->log(3, sess, s->tunnel, "%s\n", cmd2);
+		system(cmd2);
+	}
+
 	s->walled_garden = 1;
     }
     else
@@ -281,10 +326,35 @@ int garden_session(sessiont *s, int flag, char *newuser)
              s->walled_garden_name);
 
 	f->log(3, sess, s->tunnel, "%s\n", cmd);
+
+	if ( *garden_hardened_security != 0 )
+	{
+		// Removing rules
+		//iptables -D garden_security -o tun0 -d 10.13.10.1/32 -m state --state ESTABLISHED -j ACCEPT
+		//iptables -D garden_security -o tun0 -d 10.13.10.1/32 -j DROP
+		// Tom - 31/7/13
+		snprintf(cmd2, sizeof(cmd2),
+			 "/sbin/iptables -D garden_security -o tun0 -d %s/32 -m state --state ESTABLISHED -j ACCEPT && /sbin/iptables -D garden_security -o tun0 -d %s/32 -j DROP",
+			 f->fmtaddr(htonl(s->ip), 0),
+			 f->fmtaddr(htonl(s->ip), 0));
+		f->log(3, sess, s->tunnel, "%s\n", cmd2);
+		system(cmd2);
+	}
 	while (--count)
 	{
 	    int status = system(cmd);
 	    if (WEXITSTATUS(status) != 0) break;
+
+            // Note: This while loop is ugly if I understand it correctly. It will
+            // try 40 times to remove the rule until iptables whinges because the
+            // rule does not exist (which mean it will return exit code != 0)
+            // Why 40 times (int count=40) ? Could have been 100 times or 10...
+            // I reckon it is maybe designed that way to remove multiple identical
+            // iptables rules that may have been created twice.
+            // Anyway, I will do the same for the moment for my extra rules.
+            // Tom - 5/4/13
+	    int status2 = system(cmd2);
+	    if (WEXITSTATUS(status2) != 0) break;
 	}
 
 	s->walled_garden = 0;
@@ -326,6 +396,16 @@ void go_down(void)
       }
       tok = strtok(NULL,",");
     }
+
+   // Did we hardened security in the gardens ?
+   int *garden_hardened_security = f->getconfig("garden_hardened_security", INT);
+   if ( *garden_hardened_security != 0 ) {
+      for (i = 0; down_garden_security_commands[i] && *down_garden_security_commands[i]; i++)
+      {
+         f->log(3, 0, 0, "Running %s\n", temporary,down_garden_security_commands[i]);
+         system(down_garden_security_commands[i]);
+      }
+   }
 }
 
 int plugin_init(struct pluginfuncs *funcs)
