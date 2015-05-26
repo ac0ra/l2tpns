@@ -161,7 +161,6 @@ config_descriptt config_values[] = {
 	CONFIG("append_realm", append_realm, STRING),
         CONFIG("gardens", gardens, STRING),
         CONFIG("default_garden", default_garden, INT),
-        CONFIG("garden_hardened_security", garden_hardened_security, INT),
 	{ NULL, 0, 0, 0 },
 };
 
