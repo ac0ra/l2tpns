@@ -1862,8 +1862,16 @@ static void tunnelkill(tunnelidt t, char *reason)
 	}
 	// kill sessions
 	for (s = 1; s <= config->cluster_highest_sessionid ; ++s)
-		if (session[s].tunnel == t)
-			sessionkill(s, reason, TERM_ADMIN_RESET);
+		if (session[s].tunnel == t) {
+			// Silently kill session (do not send CDN) for dead tunnels
+			// If reason is set to null then we murder the session
+			// which mean we will not send a CDN packet. Tom 15/3/15
+			if ( strcmp(reason,"Timeout on control message") == 0 ) {
+				sessionkill(s, NULL, TERM_ADMIN_RESET);
+			} else {
+				sessionkill(s, reason, TERM_ADMIN_RESET);
+			}
+		}
 
 	// free tunnel
 	LOG(1, 0, t, "Kill tunnel %d [%-15s]: %s\n", t, fmtaddr(htonl(tunnel[t].ip), 0), reason);
