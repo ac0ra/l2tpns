@@ -1644,6 +1644,7 @@ void sessionshutdown(sessionidt s, char const *reason, int cdn_result, int cdn_e
 	#endif
 
 		run_plugins(PLUGIN_KILL_SESSION, &data);
+		session[s].die = TIME + 150; // Clean up in 15 seconds
 	}
 
 	if (session[s].ip && !walled_garden && !session[s].die)
@@ -1713,11 +1714,11 @@ void sessionshutdown(sessionidt s, char const *reason, int cdn_result, int cdn_e
 			control16(c, 1, cdn_result, 1);
 
 		control16(c, 14, s, 1);   // assigned session (our end)
+		// Extra debug for our fight to find what is causing SAE issue
+		// 1/4/15 - Tom
+		LOG(3, s, session[s].tunnel, "CDN sent for our session %d aka remote session %d\n",s,session[s].far);
 		controladd(c, session[s].far, session[s].tunnel); // send the message
 	}
-
-	if (!session[s].die)
-		session[s].die = TIME + 150; // Clean up in 15 seconds
 
 	// update filter refcounts
 	if (session[s].filter_in) ip_filters[session[s].filter_in - 1].used--;
@@ -1815,8 +1816,12 @@ void sessionkill(sessionidt s, char *reason, int term_cause)
 		return;
 	}
 
-	session[s].die = TIME;
-	sessionshutdown(s, (reason ? reason : "Murdered!"), (reason ? 3 : 0),  0, term_cause);  // close radius/routes, etc.
+	// Only sessionshut IF we initiated the shut down otherwise ignore
+	if ( !session[s].die ) {
+		// Set 'die time' in sessionshutdown()
+		// session[s].die = TIME;
+		sessionshutdown(s, (reason ? reason : "Murdered!"), (reason ? 3 : 0),  0, term_cause);  // close radius/routes, etc.
+	}
 
 	if(!reason)
 		reason = "Murdered!";
@@ -2918,7 +2923,7 @@ static void regular_cleanups(double period)
 			if (tunnel[t].retry <= TIME)
 			{
 				controlt *c = tunnel[t].controls;
-				uint8_t w = tunnel[t].window;
+				uint16_t w = tunnel[t].window;
 				tunnel[t].try++; // another try
 				if (tunnel[t].try > 5)
 					tunnelkill(t, "Timeout on control message"); // game over
