@@ -1,3 +1,9 @@
+l2tpns (2.2.1.2fdn3.20) unstable; urgency=low
+
+  * Add cluster_port parameter for Multiple clusters (See clustering section for more informationc).
+
+ -- Fernando Alves <fendo@sameswifi.fr>  Fri, 26 May 2017 23:25:10 +0200
+
 l2tpns (2.2.1.2fdn3.19) unstable; urgency=low
 
   * New revision format.

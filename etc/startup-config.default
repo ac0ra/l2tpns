@@ -93,6 +93,7 @@ set accounting_dir "/var/run/l2tpns/acct"
 
 # Cluster multicast address, interface
 #set cluster_address 239.192.13.13
+#set cluster_port 32792
 #set cluster_interface eth0
 
 # Cluster multicast TTL

@@ -98,7 +98,7 @@ int cluster_init()
 
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
-	addr.sin_port = htons(CLUSTERPORT);
+	addr.sin_port = htons(config->cluster_port);
 	addr.sin_addr.s_addr = INADDR_ANY;
 	setsockopt(cluster_sockfd, SOL_SOCKET, SO_REUSEADDR, &addr, sizeof(addr));
 
@@ -170,7 +170,7 @@ static int cluster_send_data(void *data, int datalen)
 	if (!config->cluster_address) return 0;
 
 	addr.sin_addr.s_addr = config->cluster_address;
-	addr.sin_port = htons(CLUSTERPORT);
+	addr.sin_port = htons(config->cluster_port);
 	addr.sin_family = AF_INET;
 
 	LOG(5, 0, 0, "Cluster send data: %d bytes\n", datalen);
@@ -253,7 +253,7 @@ static int peer_send_data(in_addr_t peer, uint8_t *data, int size)
 		return -1;
 
 	addr.sin_addr.s_addr = peer;
-	addr.sin_port = htons(CLUSTERPORT);
+	addr.sin_port = htons(config->cluster_port);
 	addr.sin_family = AF_INET;
 
 	LOG_HEX(5, "Peer send", data, size);
@@ -2247,6 +2247,7 @@ int cmd_show_cluster(struct cli_def *cli, const char *command, char **argv, int 
 	cli_print(cli, "My address       : %s", fmtaddr(my_address, 0));
 	cli_print(cli, "VIP address      : %s", fmtaddr(config->bind_address, 0));
 	cli_print(cli, "Multicast address: %s", fmtaddr(config->cluster_address, 0));
+	cli_print(cli, "UDP port         : %u", config->cluster_port);
 	cli_print(cli, "Multicast i'face : %s", config->cluster_interface);
 
 	if (!config->cluster_iam_master) {

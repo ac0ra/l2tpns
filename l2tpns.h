@@ -731,6 +731,7 @@ typedef struct
 	char		epdis_addr[20];			// MP Endpoint Discriminator address
 
 	in_addr_t	cluster_address;		// Multicast address of cluster.
+	unsigned short	cluster_port;			// UDP port of cluster.
 							// Send to this address to have everyone hear.
 	char		cluster_interface[64];		// Which interface to listen for multicast on.
 	int		cluster_iam_master;		// Are we the cluster master???

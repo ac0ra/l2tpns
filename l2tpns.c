@@ -163,6 +163,7 @@ config_descriptt config_values[] = {
 	CONFIG("icmp_rate", icmp_rate, INT),
 	CONFIG("packet_limit", max_packets, INT),
 	CONFIG("cluster_address", cluster_address, IPv4),
+	CONFIG("cluster_port", cluster_port, INT),
 	CONFIG("cluster_interface", cluster_interface, STRING),
 	CONFIG("cluster_mcast_ttl", cluster_mcast_ttl, INT),
 	CONFIG("cluster_hb_interval", cluster_hb_interval, INT),
@@ -5628,6 +5629,7 @@ static void update_config()
 	memcpy(config->old_plugins, config->plugins, sizeof(config->plugins));
 	if (!config->multi_read_count) config->multi_read_count = 10;
 	if (!config->cluster_address) config->cluster_address = inet_addr(DEFAULT_MCAST_ADDR);
+	if (!config->cluster_port) config->cluster_port = CLUSTERPORT;
 	if (!*config->cluster_interface)
 		strncpy(config->cluster_interface, DEFAULT_MCAST_INTERFACE, sizeof(config->cluster_interface) - 1);
 

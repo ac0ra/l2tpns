@@ -345,6 +345,11 @@ Multicast cluster address (default:  239.192.13.13).  See the section
 on <A HREF="#Clustering">Clustering</A> for more information.
 </LI>
 
+<LI><B>cluster_port</B> (int udp port)<BR>
+UDP cluster port (default: 32792).  See the section on
+<A HREF="#Clustering">Clustering</A> for more information.
+</LI>
+
 <LI><B>cluster_interface</B> (string)<BR>
 Interface for cluster packets (default: eth0).
 </LI>
@@ -1149,6 +1154,13 @@ counters for session traffic are periodically forwarded.<P>
 A master, when determining that it has at least one up-to-date slave
 will drop all routes (raising them again if all slaves disappear) and
 subsequently handle only packets forwarded to it by the slaves.<P>
+
+*Configurable with <B>cluster_master_min_adv</B><P>
+
+Multiple clusters can be run on the same network by just using different
+multicast <B>cluster_address</B>. However, for a given host to be part
+of multiple clusters without mixing the clusters,
+<B>cluster_port</B> must be different for each cluster.<B>
 
 <H2 ID="Routing">Routing</H2>
 If you are running a single instance, you may simply statically route

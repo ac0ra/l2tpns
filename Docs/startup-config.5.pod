@@ -80,6 +80,10 @@ B<set> I<bind_multi_address> "64.14.13.41, 64.14.13.42"
 
 Multicast cluster address (default: 239.192.13.13). See the section on Clustering for more information.
 
+=item B<Bcluster_port> (int)
+
+UDP cluster port (default: 32792). See the section on Clustering for more information.
+
 =item B<cluster_interface> (string)
 
 Interface for cluster packets (default: eth0).

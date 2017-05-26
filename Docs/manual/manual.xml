@@ -593,6 +593,16 @@ set boolean true
 	</varlistentry>
 
 	<varlistentry>
+	  <term><literal>cluster_port</literal> (udp port)</term>
+	  <listitem>
+	    <para>
+	      UDP cluster port (default: 32792).
+	      See <xref linkend="clustering"/> for more information.
+	    </para>
+	  </listitem>
+	</varlistentry>
+
+	<varlistentry>
 	  <term><literal>cluster_interface</literal> (string)</term>
 	  <listitem>
 	    <para>Interface for cluster packets (default: eth0)</para>
@@ -2089,7 +2099,8 @@ iptables -t nat -L garden -nvx
     <para>
       An <command>l2tpns</command> cluster consists of one* or more
       servers configured with the same configuration, notably the
-      multicast <literal>cluster_address</literal>.
+      multicast <literal>cluster_address</literal> and the
+      <literal>cluster_port</literal>
     </para>
 
     <para>*A stand-alone server is simply a degraded cluster.</para>
@@ -2098,7 +2109,8 @@ iptables -t nat -L garden -nvx
       Initially servers come up as cluster slaves, and periodically
       (every <literal>cluster_hb_interval</literal>/10 seconds) send
       out ping packets containing the start time of the process to the
-      multicast <literal>cluster_address</literal>.
+      multicast <literal>cluster_address</literal> on
+      <literal>cluster_port</literal>.
     </para>
 
     <para>
@@ -2140,6 +2152,13 @@ iptables -t nat -L garden -nvx
     </para>
 
     <para>*Configurable with <literal>cluster_master_min_adv</literal></para>
+
+    <para>
+      Multiple clusters can be run on the same network by just using different
+      multicast <literal>cluster_address</literal>. However, for a given host to
+      be part of multiple clusters without mixing the clusters,
+      <literal>cluster_port</literal> must be different for each cluster.
+    </para>
   </sect1>
 
   <sect1 id="routing">
