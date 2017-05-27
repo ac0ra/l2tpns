@@ -1,3 +1,9 @@
+l2tpns (2.2.1.2fdn3.21) unstable; urgency=low
+
+  * Fix: mismatch variable type (cluster_port).
+
+ -- Fernando Alves <fendo@sameswifi.fr>  Sat, 27 May 2017 11:09:54 +0200
+
 l2tpns (2.2.1.2fdn3.20) unstable; urgency=low
 
   * Add cluster_port parameter for Multiple clusters (See clustering section for more informationc).
