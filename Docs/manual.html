@@ -60,29 +60,17 @@ H3 {
 </OL>
 
 <H2 ID="Overview">Overview</H2>
-l2tpns is half of a complete L2TP implementation.  It supports only the
-LNS side of the connection.<P>
+l2tpns a complete L2TP implementation. It supports the LAC, LNS, PPPOE and DHCPv6 server.<P>
 
-L2TP (Layer 2 Tunneling Protocol) is designed to allow any layer 2
-protocol (e.g. Ethernet, PPP) to be tunneled over an IP connection.  l2tpns
-implements PPP over L2TP only.<P>
+L2TP (Layer 2 Tunneling Protocol) is designed to allow any layer 2 protocol (e.g. Ethernet, PPP) to be tunneled over an IP connection. l2tpns implements PPP over L2TP only.<P>
 
-There are a couple of other L2TP implementations, of which <A
-HREF="http://sourceforge.net/projects/l2tpd">l2tpd</A> is probably the
-most popular.  l2tpd also will handle being either end of a tunnel, and
-is a lot more configurable than l2tpns.  However, due to the way it works,
-it is nowhere near as scalable.<P>
+There are a couple of other L2TP implementations, of which <A HREF="http://sourceforge.net/projects/l2tpd">l2tpd</A> is probably the most popular.  l2tpd also will handle being either end of a tunnel, and is a lot more configurable than l2tpns.  However, due to the way it works, it is nowhere near as scalable.<P>
 
-l2tpns uses the TUN/TAP interface provided by the Linux kernel to receive
-and send packets.  Using some packet manipulation it doesn't require a
-single interface per connection, as l2tpd does.<P>
+l2tpns uses the TUN/TAP interface provided by the Linux kernel to receive and send packets.  Using some packet manipulation it doesn't require a single interface per connection, as l2tpd does.<P>
 
-This allows it to scale extremely well to very high loads and very high
-numbers of connections.<P>
+This allows it to scale extremely well to very high loads and very high numbers of connections.<P>
 
-It also has a plugin architecture which allows custom code to be run
-during processing.  An example of this is in the walled garden module
-included.<P>
+It also has a plugin architecture which allows custom code to be run during processing.  An example of this is in the walled garden module included.<P>
 
 <BR>
 <EM>Documentation is not my best skill.  If you find any problems
@@ -167,15 +155,15 @@ only ever be used for working out why it doesn't work at all.
 </LI>
 
 <LI><B>log_file</B> (string)<BR>
-This will be where all logging and debugging information is written
-to.  This may be either a filename, such as <EM>/var/log/l2tpns</EM>, or
-the special magic string <EM>syslog:facility</EM>, where <EM>facility</EM>
-is any one of the syslog logging facilities, such as local5.
+This will be where all logging and debugging information is written to. This may be either a filename, such as <EM>/var/log/l2tpns</EM>, or the special magic string <EM>syslog:facility</EM>, where <EM>facility</EM> is any one of the syslog logging facilities, such as local5.
 </LI>
 
 <LI><B>pid_file</B> (string)<BR>
-If set, the process id will be written to the specified file.  The
-value must be an absolute path.
+If set, the process id will be written to the specified file.  The value must be an absolute path.
+</LI>
+
+<LI><B>random_device</B>B> (string)<BR>
+Path to random data source (default /dev/urandom). Use "" to use the rand() library function.
 </LI>
 
 <LI><B>l2tp_secret</B> (string)<BR>
@@ -185,8 +173,7 @@ used if the LAC requests authentication.
 </LI>
 
 <LI><B>l2tp_mtu</B> (int)<BR>
-MTU of interface for L2TP traffic (default: 1500).  Used to set link
-MRU and adjust TCP MSS.
+MTU of interface for L2TP traffic (default: 1500). Used to set link MRU and adjust TCP MSS.
 </LI>
 
 <LI><B>ppp_restart_time</B> (int)<BR>
@@ -231,8 +218,7 @@ session is closed.
 </LI>
 
 <LI><B>radius_secret</B> (string)<BR>
-This secret will be used in all RADIUS queries.  If this is not set then
-RADIUS queries will fail.
+This secret will be used in all RADIUS queries. If this is not set then RADIUS queries will fail.
 </LI>
 
 <LI><B>radius_authtypes</B> (string)</BR>
@@ -252,15 +238,39 @@ session is established.
 </LI>
 
 <LI><B>bind_address</B> (ip address)<BR>
-When the tun interface is created, it is assigned the address
-specified here.  If no address is given, 1.1.1.1 is used.  Packets
-containing user traffic should be routed via this address if given,
-otherwise the primary address of the machine.
+It's the listen address of the l2tp udp protocol sent and received to LAC. This address is also assigned to the tun interface if no iftun_address is specified. Packets containing user traffic should be routed via this address if given, otherwise the primary address of the machine.
+</LI>
+
+<LI><B>iftun_address</B> (ip address)<BR>
+This parameter is used when you want a tun interface address different
+from the address of "bind_address" (For use in cases of specific configuration).
+If no address is given to iftun_address and bind_address, 1.1.1.1 is used.
+</LI>
+
+<LI><B>bind_multi_address</B> (ip address)<BR>
+This parameter permit to listen several addresss of the l2tp udp protocol
+(and set several address to the tun interface).
+<BR>
+WHEN this parameter is set, It OVERWRITE the parameters "bind_address"
+and "iftun_address".
+<BR>
+these can be interesting when you want do load-balancing in cluster mode
+of the uploaded from the LAC. For example you can set a bgp.prepend(MY_AS)
+for Address1 on LNS1 and a bgp.prepend(MY_AS) for Address2 on LNS2
+(see BGP AS-path prepending).
+<BR>
+example of use with 2 address:
+<BR>
+set bind_multi_address "64.14.13.41, 64.14.13.42"
+</LI>
+
+<LI><B>tundevicename</B> (string)<BR>
+Name of the tun interface (default: "tun0").
 </LI>
 
 <LI><B>peer_address</B> (ip address)<BR>
 Address to send to clients as the default gateway.
-</L1>
+</LI>
 
 <LI><B>send_garp</B> (boolean)<BR>
 Determines whether or not to send a gratuitous ARP for the
@@ -287,13 +297,13 @@ every connected use will be dumped to a file in this directory.  Each
 file dumped begins with a header, where each line is prefixed by #. 
 Following the header is a single line for every connected user, fields
 separated by a space.<BR> The fields are username, ip, qos,
-uptxoctets, downrxoctets.  The qos field is 1 if a standard user, and
-2 if the user is throttled.
+uptxoctets, downrxoctets, origin (optional). The qos field is 1 if a standard user, and
+2 if the user is throttled. The origin field is dump if account_all_origin is set to true
+(origin value: L=LAC data, R=Remote LNS data, P=PPPOE data).
 </LI>
 
-<LI><B>setuid</B> (int)<BR>
-After starting up and binding the interface, change UID to this.  This
-doesn't work properly.
+<LI><B>account_all_origin</B> (boolean)<BR>
+If set to true, all origin of the usage is dumped to the accounting file (LAC+Remote LNS+PPPOE)(default false).
 </LI>
 
 <LI><B>dump_speed</B> (boolean)<BR>
@@ -335,6 +345,11 @@ Multicast cluster address (default:  239.192.13.13).  See the section
 on <A HREF="#Clustering">Clustering</A> for more information.
 </LI>
 
+<LI><B>cluster_port</B> (int udp port)<BR>
+UDP cluster port (default: 32792).  See the section on
+<A HREF="#Clustering">Clustering</A> for more information.
+</LI>
+
 <LI><B>cluster_interface</B> (string)<BR>
 Interface for cluster packets (default: eth0).
 </LI>
@@ -357,7 +372,100 @@ from the master.
 Determines the minumum number of up to date slaves required before the
 master will drop routes (default: 1).
 </LI>
+
+<LI><B>echo_timeout</B> (int)<BR>
+Time between last packet sent and LCP ECHO generation
+(default: 10 (seconds)).
+</LI>
+
+<LI><B>idle_echo_timeout</B> (int)<BR>
+Drop sessions who have not responded within idle_echo_timeout seconds
+(default: 240 (seconds))
+</LI>
+
+<LI><B>ppp_keepalive</B> (int)<BR>
+Change this value to no to force generation of LCP ECHO every
+echo_timeout seconds, even there are activity on the link.
+(default: yes)
+</LI>
+
+<LI><B>auth_tunnel_change_addr_src</B> (boolean)<BR>
+This parameter authorize to change the source IP of the tunnels l2tp.
+This parameter can be used when the remotes BAS/LAC are l2tpns server
+configured in cluster mode, but that the interface to remote LNS are
+not clustered (the tunnel can be coming from different source IP)
+(default: no).
+</LI>
+
+<LI><B>disable_sending_hello</B> (boolean)<BR>
+Disable l2tp sending HELLO message for Apple compatibility.
+Some OS X implementation of l2tp no manage the L2TP "HELLO message".
+(default: no).
+</LI>
+
 </UL>
+
+<P><U><B>LAC configuration</B></U></P>
+<UL>
+<LI><B>bind_address_remotelns</B> (ip address)<BR>
+Address of the interface to listen the remote LNS tunnels.
+If no address is given, all interfaces are listened (Any Address).
+</LI>
+
+<LI><B>bind_portremotelns</B> (short)<BR>
+Port to bind for the Remote LNS (default: 65432).
+</LI>
+
+</UL>
+
+<P>A static REMOTES LNS configuration can be entered by the command:</P>
+<DL> <DD><B>setforward</B> <I>MASK</I> <I>IP</I> <I>PORT</I> <I>SECRET</I> </DL>
+
+where <I>MASK</I> specifies the mask of users who have forwarded to
+remote LNS (ex: "/friendISP@company.com").</BR>
+where <I>IP</I> specifies the IP of the  remote LNS (ex: "66.66.66.55").</BR>
+where <I>PORT</I> specifies the L2TP Port of the remote LNS
+(Normally should be 1701) (ex: 1701).</BR>
+where <I>SECRET</I> specifies the secret password the remote LNS (ex: mysecret).</BR>
+</BR>
+The static Remote LNS configuration can be used when the friend ISP not 
+have a proxied Radius.</BR>
+If the proxied Radius is used, It will return the RADIUS attributes:</BR>
+       Tunnel-Type: 1 = L2TP</BR>
+       Tunnel-Medium-Type: 1 = IPv4</BR>
+       Tunnel-Password: 1 = "LESECRETL2TP"</BR>
+       Tunnel-Server-Endpoint: 1 = "88.xx.xx.x1"</BR>
+       Tunnel-Assignment-Id: 1 = "friendisp_lns1"</BR>
+       Tunnel-Type: 2 = L2TP</BR>
+       Tunnel-Medium-Type: 2 = IPv4</BR>
+       Tunnel-Password: 2 = "LESECRETL2TP"</BR>
+       Tunnel-Server-Endpoint: 2 = "88.xx.xx.x2"</BR>
+       Tunnel-Assignment-Id: 2 = "friendisp_lns2"</BR>    
+
+<P><U><B>PPPOE configuration</B></U></P>
+
+<UL>
+<LI><B>pppoe_if_to_bind</B> (string)<BR>
+PPPOE server interface to bind (ex: "eth0.12"), If not specified the server PPPOE is not enabled.
+For the pppoe clustering, all the interfaces PPPOE of the clusters must use the same HW address (MAC address).
+</LI>
+
+<LI><B>pppoe_service_name</B> (string)<BR>
+PPPOE service name (default: NULL).
+</LI>
+
+<LI><B>pppoe_ac_name</B> (string)<BR>
+PPPOE  access concentrator name (default: "l2tpns-pppoe").
+</LI>
+
+<LI><B>pppoe_only_equal_svc_name</B> (boolean)<BR>
+If set to yes, the PPPOE server only accepts clients with a "service-name"
+different from NULL and a "service-name" equal to server "service-name" (default: no).
+</LI>
+
+</UL>
+
+<P><U><B>BGP configuration</B></U></P>
 
 <P>BGP routing configuration is entered by the command:
 The routing configuration section is entered by the command
@@ -1046,6 +1154,13 @@ counters for session traffic are periodically forwarded.<P>
 A master, when determining that it has at least one up-to-date slave
 will drop all routes (raising them again if all slaves disappear) and
 subsequently handle only packets forwarded to it by the slaves.<P>
+
+*Configurable with <B>cluster_master_min_adv</B><P>
+
+Multiple clusters can be run on the same network by just using different
+multicast <B>cluster_address</B>. However, for a given host to be part
+of multiple clusters without mixing the clusters,
+<B>cluster_port</B> must be different for each cluster.<B>
 
 <H2 ID="Routing">Routing</H2>
 If you are running a single instance, you may simply statically route

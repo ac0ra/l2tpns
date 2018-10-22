@@ -1,4 +1,4 @@
-CFLAGS = -g -Wall -W
+CFLAGS = -g -Wall -W -std=c99 -pedantic
 TARGETS = bounce generateload radius
 
 all: $(TARGETS)
@@ -10,3 +10,4 @@ clean:
 
 radius: radius.c ../md5.o
 	$(CC) $(CFLAGS) -std=c99 -o radius radius.c ../md5.o
+=======

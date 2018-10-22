@@ -4,13 +4,13 @@
 #include <stdlib.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#include <netinet/ip6.h>
+#include "dhcp6.h"
 #include "l2tpns.h"
 #include "plugin.h"
 #include "control.h"
 
 /* walled garden */
-
-char const *cvs_id = "$Id: garden.c,v 1.25 2006/02/23 01:07:23 bodea Exp $";
 
 int plugin_api_version = PLUGIN_API_VERSION;
 static struct pluginfuncs *f = 0;
@@ -198,19 +198,10 @@ int plugin_become_master(void)
 
     iam_master = 1;	// We just became the master. Wow!
 
-    if (gardens[0] == 0)
-      strncpy(gardens,"garden",7);
-    
-    tok = strtok(gardens,",");
-
-    while (tok != NULL) {
-      for (i = 0; up_commands[i] && *up_commands[i]; i++)
-      {
-	sprintf(temporary,up_commands[i],tok);
-	f->log(3, 0, 0, "Running %s\n", temporary);
-	system(temporary);
-      }
-      tok = strtok(NULL,",");
+    for (i = 0; up_commands[i] && *up_commands[i]; i++)
+    {
+	f->log(3, 0, 0, "Running %s\n", up_commands[i]);
+	if (-1 == system(up_commands[i])) f->log(0, 0, 0, "error command %s\n", up_commands[i]);
     }
 
    // Should we create new chains to harden security in the gardens ?
@@ -239,6 +230,7 @@ int garden_session(sessiont *s, int flag, char *newuser)
 {
     char cmd[2048];
     sessionidt sess;
+	int status;
 
     if (!s) return 0;
     if (!s->opened) return 0;
@@ -266,6 +258,7 @@ int garden_session(sessiont *s, int flag, char *newuser)
 
 	f->log(3, sess, s->tunnel, "%s\n", cmd);
 	system(cmd);
+    status = system(cmd);
 
 	if ( *garden_hardened_security != 0 )
 	{
@@ -342,7 +335,7 @@ int garden_session(sessiont *s, int flag, char *newuser)
 	}
 	while (--count)
 	{
-	    int status = system(cmd);
+	    status = system(cmd);
 	    if (WEXITSTATUS(status) != 0) break;
 
             // Note: This while loop is ugly if I understand it correctly. It will
@@ -430,7 +423,12 @@ int plugin_init(struct pluginfuncs *funcs)
     /* master killed/crashed? */
     if (found_nat)
     {
-      go_down();
+	int i;
+	for (i = 0; down_commands[i] && *down_commands[i]; i++)
+	{
+	    f->log(3, 0, 0, "Running %s\n", down_commands[i]);
+	    if (-1 == system(down_commands[i])) f->log(0, 0, 0, "error command %s\n", down_commands[i]);
+	}
     }
 
     return 1;
@@ -441,5 +439,9 @@ void plugin_done()
     if (!iam_master)	// Never became master. nothing to do.
 	return;
 
-    go_down();
+    for (i = 0; down_commands[i] && *down_commands[i]; i++)
+    {
+	f->log(3, 0, 0, "Running %s\n", down_commands[i]);
+	if (-1 == system(down_commands[i])) f->log(0, 0, 0, "error command %s\n", down_commands[i]);
+    }
 }

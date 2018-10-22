@@ -1,10 +1,8 @@
 // L2TP Network Server
 // Adrian Kennard 2002
-// Copyright (c) 2003, 2004, 2005 Optus Internet Engineering
+// Copyright (c) 2003, 2004, 2005, 2006 Optus Internet Engineering
 // Copyright (c) 2002 FireBrick (Andrews & Arnold Ltd / Watchfront Ltd) - GPL licenced
 // vim: sw=8 ts=8
-
-char const *cvs_id_l2tpns = "$Id: l2tpns.c,v 1.161.2.1 2006/06/22 15:30:50 bodea Exp $";
 
 #include <arpa/inet.h>
 #include <assert.h>
@@ -12,9 +10,9 @@ char const *cvs_id_l2tpns = "$Id: l2tpns.c,v 1.161.2.1 2006/06/22 15:30:50 bodea
 #include <fcntl.h>
 #include <linux/if_tun.h>
 #define SYSLOG_NAMES
+#include <stdio.h>
 #include <syslog.h>
 #include <malloc.h>
-#include <math.h>
 #include <net/route.h>
 #include <sys/mman.h>
 #include <netdb.h>
@@ -22,7 +20,6 @@ char const *cvs_id_l2tpns = "$Id: l2tpns.c,v 1.161.2.1 2006/06/22 15:30:50 bodea
 #include <netinet/ip6.h>
 #include <stdarg.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
 #include <ctype.h>
 #include <sys/ioctl.h>
@@ -32,7 +29,7 @@ char const *cvs_id_l2tpns = "$Id: l2tpns.c,v 1.161.2.1 2006/06/22 15:30:50 bodea
 #include <sys/types.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
-#include <linux/if.h>
+#include <net/if.h>
 #include <stddef.h>
 #include <time.h>
 #include <dlfcn.h>
@@ -40,8 +37,11 @@ char const *cvs_id_l2tpns = "$Id: l2tpns.c,v 1.161.2.1 2006/06/22 15:30:50 bodea
 #include <sched.h>
 #include <sys/sysinfo.h>
 #include <libcli.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 
 #include "md5.h"
+#include "dhcp6.h"
 #include "l2tpns.h"
 #include "cluster.h"
 #include "plugin.h"
@@ -58,27 +58,38 @@ char const *cvs_id_l2tpns = "$Id: l2tpns.c,v 1.161.2.1 2006/06/22 15:30:50 bodea
 #ifdef FREETRAFFIC
 #include "freetraffic.h"
 #endif
+#include "l2tplac.h"
+#include "pppoe.h"
+#include "dhcp6.h"
+
+char * Vendor_name = "Linux L2TPNS";
+uint32_t call_serial_number = 0;
 
 // Globals
 configt *config = NULL;		// all configuration
+int nlfd = -1;			// netlink socket
 int tunfd = -1;			// tun interface file handle. (network device)
-int udpfd = -1;			// UDP file handle
+int udpfd[MAX_UDPFD + 1] = INIT_TABUDPFD;		// array UDP file handle + 1 for lac udp
+int udplacfd = -1;		// UDP LAC file handle
 int controlfd = -1;		// Control signal handle
 int clifd = -1;			// Socket listening for CLI connections.
 int daefd = -1;			// Socket listening for DAE connections.
 int snoopfd = -1;		// UDP file handle for sending out intercept data
 int *radfds = NULL;		// RADIUS requests file handles
-int ifrfd = -1;			// File descriptor for routing, etc
-int ifr6fd = -1;		// File descriptor for IPv6 routing, etc
 int rand_fd = -1;		// Random data source
 int cluster_sockfd = -1;	// Intra-cluster communications socket.
 int epollfd = -1;		// event polling
 time_t basetime = 0;		// base clock
-char hostname[1000] = "";	// us.
+char hostname[MAXHOSTNAME] = "";	// us.
 static int tunidx;		// ifr_ifindex of tun device
+int nlseqnum = 0;		// netlink sequence number
+int min_initok_nlseqnum = 0;	// minimun seq number for messages after init is ok
 static int syslog_log = 0;	// are we logging to syslog
 static FILE *log_stream = 0;	// file handle for direct logging (i.e. direct into file, not via syslog).
 uint32_t last_id = 0;		// Unique ID for radius accounting
+// Guest change
+char guest_users[10][32];       // Array of guest users
+int guest_accounts_num = 0;     // Number of guest users
 
 // calculated from config->l2tp_mtu
 uint16_t MRU = 0;		// PPP MRU
@@ -87,11 +98,15 @@ uint16_t MSS = 0;		// TCP MSS
 struct cli_session_actions *cli_session_actions = NULL;	// Pending session changes requested by CLI
 struct cli_tunnel_actions *cli_tunnel_actions = NULL;	// Pending tunnel changes required by CLI
 
-static void *ip_hash[256];	// Mapping from IP address to session structures.
+union iphash {
+	sessionidt sess;
+	union iphash *idx;
+} ip_hash[256];			// Mapping from IP address to session structures.
+
 struct ipv6radix {
-	int sess;
+	sessionidt sess;
 	struct ipv6radix *branch;
-} ipv6_hash[256];		// Mapping from IPv6 address to session structures.
+} ipv6_hash[16];		// Mapping from IPv6 address to session structures.
 
 // Traffic counters.
 static uint32_t udp_rx = 0, udp_rx_pkt = 0, udp_tx = 0;
@@ -99,6 +114,7 @@ static uint32_t eth_rx = 0, eth_rx_pkt = 0;
 uint32_t eth_tx = 0;
 
 time_t time_now = 0;			// Current time in seconds since epoch.
+uint64_t time_now_ms = 0;		// Current time in milliseconds since epoch.
 static char time_now_string[64] = {0};	// Current time as a string.
 static int time_changed = 0;		// time_now changed
 char main_quit = 0;			// True if we're in the process of exiting.
@@ -121,6 +137,7 @@ config_descriptt config_values[] = {
 	CONFIG("ppp_restart_time", ppp_restart_time, INT),
 	CONFIG("ppp_max_configure", ppp_max_configure, INT),
 	CONFIG("ppp_max_failure", ppp_max_failure, INT),
+	CONFIG("ppp_keepalive", ppp_keepalive, BOOL),
 	CONFIG("primary_dns", default_dns1, IPv4),
 	CONFIG("secondary_dns", default_dns2, IPv4),
 	CONFIG("primary_radius", radiusserver[0], IPv4),
@@ -132,9 +149,13 @@ config_descriptt config_values[] = {
 	CONFIG("radius_secret", radiussecret, STRING),
 	CONFIG("radius_authtypes", radius_authtypes_s, STRING),
 	CONFIG("radius_dae_port", radius_dae_port, SHORT),
+	CONFIG("radius_bind_min", radius_bind_min, SHORT),
+	CONFIG("radius_bind_max", radius_bind_max, SHORT),
 	CONFIG("allow_duplicate_users", allow_duplicate_users, BOOL),
 	CONFIG("allow_duplicate_ip", allow_duplicate_ip, BOOL),
 	CONFIG("suicide_duplicate_ip", suicide_duplicate_ip, BOOL),
+	CONFIG("kill_timedout_sessions", kill_timedout_sessions, BOOL),
+	CONFIG("guest_account", guest_user, STRING),
 	CONFIG("bind_address", bind_address, IPv4),
 	CONFIG("peer_address", peer_address, IPv4),
 	CONFIG("send_garp", send_garp, BOOL),
@@ -143,6 +164,7 @@ config_descriptt config_values[] = {
 	CONFIG("accounting_dir", accounting_dir, STRING),
 	CONFIG("garden_accounting_dir", garden_accounting_dir, STRING),
 	CONFIG("setuid", target_uid, INT),
+	CONFIG("account_all_origin", account_all_origin, BOOL),
 	CONFIG("dump_speed", dump_speed, BOOL),
 	CONFIG("multi_read_count", multi_read_count, INT),
 	CONFIG("scheduler_fifo", scheduler_fifo, BOOL),
@@ -150,6 +172,7 @@ config_descriptt config_values[] = {
 	CONFIG("icmp_rate", icmp_rate, INT),
 	CONFIG("packet_limit", max_packets, INT),
 	CONFIG("cluster_address", cluster_address, IPv4),
+	CONFIG("cluster_port", cluster_port, INT),
 	CONFIG("cluster_interface", cluster_interface, STRING),
 	CONFIG("cluster_mcast_ttl", cluster_mcast_ttl, INT),
 	CONFIG("cluster_hb_interval", cluster_hb_interval, INT),
@@ -159,18 +182,46 @@ config_descriptt config_values[] = {
  	CONFIG("cluster_master_min_adv", cluster_master_min_adv, INT),
 	CONFIG("ipv6_prefix", ipv6_prefix, IPv6),
 	CONFIG("append_realm", append_realm, STRING),
-        CONFIG("gardens", gardens, STRING),
-        CONFIG("default_garden", default_garden, INT),
-        CONFIG("garden_hardened_security", garden_hardened_security, INT),
-	{ NULL, 0, 0, 0 },
+    CONFIG("gardens", gardens, STRING),
+    CONFIG("default_garden", default_garden, INT),
+    CONFIG("garden_hardened_security", garden_hardened_security, INT),
+	CONFIG("cli_bind_address", cli_bind_address, IPv4),
+	CONFIG("hostname", hostname, STRING),
+#ifdef BGP
+	CONFIG("nexthop_address", nexthop_address, IPv4),
+	CONFIG("nexthop6_address", nexthop6_address, IPv6),
+#endif
+	CONFIG("echo_timeout", echo_timeout, INT),
+	CONFIG("idle_echo_timeout", idle_echo_timeout, INT),
+	CONFIG("iftun_address", iftun_address, IPv4),
+	CONFIG("tundevicename", tundevicename, STRING),
+	CONFIG("disable_lac_func", disable_lac_func, BOOL),
+	CONFIG("auth_tunnel_change_addr_src", auth_tunnel_change_addr_src, BOOL),
+	CONFIG("bind_address_remotelns", bind_address_remotelns, IPv4),
+	CONFIG("bind_portremotelns", bind_portremotelns, SHORT),
+	CONFIG("pppoe_if_to_bind", pppoe_if_to_bind, STRING),
+	CONFIG("pppoe_service_name", pppoe_service_name, STRING),
+	CONFIG("pppoe_ac_name", pppoe_ac_name, STRING),
+	CONFIG("disable_sending_hello", disable_sending_hello, BOOL),
+	CONFIG("disable_no_spoof", disable_no_spoof, BOOL),
+	CONFIG("bind_multi_address", bind_multi_address, STRING),
+	CONFIG("pppoe_only_equal_svc_name", pppoe_only_equal_svc_name, BOOL),
+	CONFIG("multi_hostname", multi_hostname, STRING),
+	CONFIG("no_throttle_local_IP", no_throttle_local_IP, BOOL),
+	CONFIG("dhcp6_preferred_lifetime", dhcp6_preferred_lifetime, INT),
+	CONFIG("dhcp6_valid_lifetime", dhcp6_valid_lifetime, INT),
+	CONFIG("dhcp6_server_duid", dhcp6_server_duid, INT),
+	CONFIG("dns6_lifetime", dns6_lifetime, INT),
+	CONFIG("primary_ipv6_dns", default_ipv6_dns1, IPv6),
+	CONFIG("secondary_ipv6_dns", default_ipv6_dns2, IPv6),
+	CONFIG("default_ipv6_domain_list", default_ipv6_domain_list, STRING),
+	{ NULL, 0, 0, 0 }
 };
 
 static char *plugin_functions[] = {
 	NULL,
 	"plugin_pre_auth",
 	"plugin_post_auth",
-	"plugin_packet_rx",
-	"plugin_packet_tx",
 	"plugin_timer",
 	"plugin_new_session",
 	"plugin_kill_session",
@@ -189,6 +240,8 @@ static sessiont shut_acct[8192];
 static sessionidt shut_acct_n = 0;
 
 tunnelt *tunnel = NULL;			// Array of tunnel structures.
+bundlet *bundle = NULL;			// Array of bundle structures.
+fragmentationt *frag = NULL;		// Array of fragmentation structures.
 sessiont *session = NULL;		// Array of session structures.
 sessionlocalt *sess_local = NULL;	// Array of local per-session counters.
 radiust *radius = NULL;			// Array of radius structures.
@@ -211,9 +264,11 @@ struct Tstats *_statistics = NULL;
 struct Tringbuffer *ringbuffer = NULL;
 #endif
 
-static void cache_ipmap(in_addr_t ip, int s);
+static ssize_t netlink_send(struct nlmsghdr *nh);
+static void netlink_addattr(struct nlmsghdr *nh, int type, const void *data, int alen);
+static void cache_ipmap(in_addr_t ip, sessionidt s);
 static void uncache_ipmap(in_addr_t ip);
-static void cache_ipv6map(struct in6_addr ip, int prefixlen, int s);
+static void cache_ipv6map(struct in6_addr ip, int prefixlen, sessionidt s);
 static void free_ip_address(sessionidt s);
 static void dump_acct_info(int all);
 static void sighup_handler(int sig);
@@ -237,6 +292,7 @@ static void malloc_pool(uint8_t x,uint8_t y);
 // quit actions (master)
 #define QUIT_FAILOVER	1 // SIGTERM: exit when all control messages have been acked (for cluster failover)
 #define QUIT_SHUTDOWN	2 // SIGQUIT: shutdown sessions/tunnels, reject new connections
+static void bundleclear(bundleidt b);
 
 // return internal time (10ths since process startup), set f if given
 // as a side-effect sets time_now, and time_changed
@@ -250,6 +306,11 @@ static clockt now(double *f)
 	    time_now = t.tv_sec;
 	    time_changed++;
 	}
+
+	// Time in milliseconds
+	// TODO FOR MLPPP DEV
+	//time_now_ms = (t.tv_sec * 1000) + (t.tv_usec/1000);
+
 	return (t.tv_sec - basetime) * 10 + t.tv_usec / 100000 + 1;
 }
 
@@ -284,7 +345,7 @@ void _log(int level, sessionidt s, tunnelidt t, const char *format, ...)
 		ringbuffer->buffer[ringbuffer->tail].session = s;
 		ringbuffer->buffer[ringbuffer->tail].tunnel = t;
 		va_start(ap, format);
-		vsnprintf(ringbuffer->buffer[ringbuffer->tail].message, 4095, format, ap);
+		vsnprintf(ringbuffer->buffer[ringbuffer->tail].message, MAX_LOG_LENGTH, format, ap);
 		va_end(ap);
 	}
 #endif
@@ -430,43 +491,65 @@ void random_data(uint8_t *buf, int len)
 // via BGP if enabled, and stuffs it into the
 // 'sessionbyip' cache.
 //
-// 'ip' and 'mask' must be in _host_ order.
+// 'ip' must be in _host_ order.
 //
-static void routeset(sessionidt s, in_addr_t ip, in_addr_t mask, in_addr_t gw, int add)
+static void routeset(sessionidt s, in_addr_t ip, int prefixlen, in_addr_t gw, int add)
 {
-	struct rtentry r;
+	struct {
+		struct nlmsghdr nh;
+		struct rtmsg rt;
+		char buf[32];
+	} req;
 	int i;
+	in_addr_t n_ip;
 
-	if (!mask) mask = 0xffffffff;
+	if (!prefixlen) prefixlen = 32;
 
-	ip &= mask;		// Force the ip to be the first one in the route.
+	ip &= 0xffffffff << (32 - prefixlen);;	// Force the ip to be the first one in the route.
 
-	memset(&r, 0, sizeof(r));
-	r.rt_dev = config->tundevice;
-	r.rt_dst.sa_family = AF_INET;
-	*(uint32_t *) & (((struct sockaddr_in *) &r.rt_dst)->sin_addr.s_addr) = htonl(ip);
-	r.rt_gateway.sa_family = AF_INET;
-	*(uint32_t *) & (((struct sockaddr_in *) &r.rt_gateway)->sin_addr.s_addr) = htonl(gw);
-	r.rt_genmask.sa_family = AF_INET;
-	*(uint32_t *) & (((struct sockaddr_in *) &r.rt_genmask)->sin_addr.s_addr) = htonl(mask);
-	r.rt_flags = (RTF_UP | RTF_STATIC);
+	memset(&req, 0, sizeof(req));
+
+	if (add)
+	{
+		req.nh.nlmsg_type = RTM_NEWROUTE;
+		req.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_REPLACE;
+	}
+	else
+	{
+		req.nh.nlmsg_type = RTM_DELROUTE;
+		req.nh.nlmsg_flags = NLM_F_REQUEST;
+	}
+
+	req.nh.nlmsg_len = NLMSG_LENGTH(sizeof(req.rt));
+
+	req.rt.rtm_family = AF_INET;
+	req.rt.rtm_dst_len = prefixlen;
+	req.rt.rtm_table = RT_TABLE_MAIN;
+	req.rt.rtm_protocol = 42;
+	req.rt.rtm_scope = RT_SCOPE_LINK;
+	req.rt.rtm_type = RTN_UNICAST;
+
+	netlink_addattr(&req.nh, RTA_OIF, &tunidx, sizeof(int));
+	n_ip = htonl(ip);
+	netlink_addattr(&req.nh, RTA_DST, &n_ip, sizeof(n_ip));
 	if (gw)
-		r.rt_flags |= RTF_GATEWAY;
-	else if (mask == 0xffffffff)
-		r.rt_flags |= RTF_HOST;
+	{
+		n_ip = htonl(gw);
+		netlink_addattr(&req.nh, RTA_GATEWAY, &n_ip, sizeof(n_ip));
+	}
 
-	LOG(1, s, 0, "Route %s %s/%s%s%s\n", add ? "add" : "del",
-	    fmtaddr(htonl(ip), 0), fmtaddr(htonl(mask), 1),
+	LOG(1, s, session[s].tunnel, "Route %s %s/%d%s%s\n", add ? "add" : "del",
+	    fmtaddr(htonl(ip), 0), prefixlen,
 	    gw ? " via" : "", gw ? fmtaddr(htonl(gw), 2) : "");
 
-	if (ioctl(ifrfd, add ? SIOCADDRT : SIOCDELRT, (void *) &r) < 0)
-		LOG(0, 0, 0, "routeset() error in ioctl: %s\n", strerror(errno));
+	if (netlink_send(&req.nh) < 0)
+		LOG(0, 0, 0, "routeset() error in sending netlink message: %s\n", strerror(errno));
 
 #ifdef BGP
 	if (add)
-		bgp_add_route(htonl(ip), htonl(mask));
+		bgp_add_route(htonl(ip), prefixlen);
 	else
-		bgp_del_route(htonl(ip), htonl(mask));
+		bgp_del_route(htonl(ip), prefixlen);
 #endif /* BGP */
 
 		// Add/Remove the IPs to the 'sessionbyip' cache.
@@ -482,40 +565,68 @@ static void routeset(sessionidt s, in_addr_t ip, in_addr_t mask, in_addr_t gw, i
 		if (!add)	// Are we deleting a route?
 			s = 0;	// Caching the session as '0' is the same as uncaching.
 
-		for (i = ip; (i&mask) == (ip&mask) ; ++i)
+		for (i = ip; i < ip+(1<<(32-prefixlen)) ; ++i)
 			cache_ipmap(i, s);
 	}
 }
 
 void route6set(sessionidt s, struct in6_addr ip, int prefixlen, int add)
 {
-	struct in6_rtmsg rt;
+	struct {
+		struct nlmsghdr nh;
+		struct rtmsg rt;
+		char buf[64];
+	} req;
+	int metric;
 	char ipv6addr[INET6_ADDRSTRLEN];
 
-	if (ifr6fd < 0)
+	if (!config->ipv6_prefix.s6_addr[0])
 	{
 		LOG(0, 0, 0, "Asked to set IPv6 route, but IPv6 not setup.\n");
 		return;
 	}
 
-	memset(&rt, 0, sizeof(rt));
+	memset(&req, 0, sizeof(req));
 
-	memcpy(&rt.rtmsg_dst, &ip, sizeof(struct in6_addr));
-	rt.rtmsg_dst_len = prefixlen;
-	rt.rtmsg_metric = 1;
-	rt.rtmsg_flags = RTF_UP;
-	rt.rtmsg_ifindex = tunidx;
+	if (add)
+	{
+		req.nh.nlmsg_type = RTM_NEWROUTE;
+		req.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_REPLACE;
+	}
+	else
+	{
+		req.nh.nlmsg_type = RTM_DELROUTE;
+		req.nh.nlmsg_flags = NLM_F_REQUEST;
+	}
 
-	LOG(1, 0, 0, "Route %s %s/%d\n",
+	req.nh.nlmsg_len = NLMSG_LENGTH(sizeof(req.rt));
+
+	req.rt.rtm_family = AF_INET6;
+	req.rt.rtm_dst_len = prefixlen;
+	req.rt.rtm_table = RT_TABLE_MAIN;
+	req.rt.rtm_protocol = 42;
+	req.rt.rtm_scope = RT_SCOPE_LINK;
+	req.rt.rtm_type = RTN_UNICAST;
+
+	netlink_addattr(&req.nh, RTA_OIF, &tunidx, sizeof(int));
+	netlink_addattr(&req.nh, RTA_DST, &ip, sizeof(ip));
+	metric = 1;
+	netlink_addattr(&req.nh, RTA_METRICS, &metric, sizeof(metric));
+
+	LOG(1, s, session[s].tunnel, "Route %s %s/%d\n",
 	    add ? "add" : "del",
 	    inet_ntop(AF_INET6, &ip, ipv6addr, INET6_ADDRSTRLEN),
 	    prefixlen);
 
-	if (ioctl(ifr6fd, add ? SIOCADDRT : SIOCDELRT, (void *) &rt) < 0)
-		LOG(0, 0, 0, "route6set() error in ioctl: %s\n",
-				strerror(errno));
+	if (netlink_send(&req.nh) < 0)
+		LOG(0, 0, 0, "route6set() error in sending netlink message: %s\n", strerror(errno));
 
-	// FIXME: need to add BGP routing (RFC2858)
+#ifdef BGP
+	if (add)
+		bgp_add_route6(ip, prefixlen);
+	else
+		bgp_del_route6(ip, prefixlen);
+#endif /* BGP */
 
 	if (s)
 	{
@@ -528,12 +639,86 @@ void route6set(sessionidt s, struct in6_addr ip, int prefixlen, int add)
 	return;
 }
 
-// defined in linux/ipv6.h, but tricky to include from user-space
-// TODO: move routing to use netlink rather than ioctl
-struct in6_ifreq {
-	struct in6_addr ifr6_addr;
-	__u32 ifr6_prefixlen;
-	unsigned int ifr6_ifindex;
+//
+// Set up netlink socket
+static void initnetlink(void)
+{
+	struct sockaddr_nl nladdr;
+
+	nlfd = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+	if (nlfd < 0)
+	{
+		LOG(0, 0, 0, "Can't create netlink socket: %s\n", strerror(errno));
+		exit(1);
+	}
+
+	memset(&nladdr, 0, sizeof(nladdr));
+	nladdr.nl_family = AF_NETLINK;
+	nladdr.nl_pid = getpid();
+
+	if (bind(nlfd, (struct sockaddr *)&nladdr, sizeof(nladdr)) < 0)
+	{
+		LOG(0, 0, 0, "Can't bind netlink socket: %s\n", strerror(errno));
+		exit(1);
+	}
+}
+
+static ssize_t netlink_send(struct nlmsghdr *nh)
+{
+	struct sockaddr_nl nladdr;
+	struct iovec iov;
+	struct msghdr msg;
+
+	nh->nlmsg_pid = getpid();
+	nh->nlmsg_seq = ++nlseqnum;
+
+	// set kernel address
+	memset(&nladdr, 0, sizeof(nladdr));
+	nladdr.nl_family = AF_NETLINK;
+
+	iov = (struct iovec){ (void *)nh, nh->nlmsg_len };
+	msg = (struct msghdr){ (void *)&nladdr, sizeof(nladdr), &iov, 1, NULL, 0, 0 };
+
+	return sendmsg(nlfd, &msg, 0);
+}
+
+static ssize_t netlink_recv(void *buf, ssize_t len)
+{
+	struct sockaddr_nl nladdr;
+	struct iovec iov;
+	struct msghdr msg;
+
+	// set kernel address
+	memset(&nladdr, 0, sizeof(nladdr));
+	nladdr.nl_family = AF_NETLINK;
+
+	iov = (struct iovec){ buf, len };
+	msg = (struct msghdr){ (void *)&nladdr, sizeof(nladdr), &iov, 1, NULL, 0, 0 };
+
+	return recvmsg(nlfd, &msg, 0);
+}
+
+/* adapted from iproute2 */
+static void netlink_addattr(struct nlmsghdr *nh, int type, const void *data, int alen)
+{
+	int len = RTA_LENGTH(alen);
+	struct rtattr *rta;
+
+	rta = (struct rtattr *)(((void *)nh) + NLMSG_ALIGN(nh->nlmsg_len));
+	rta->rta_type = type;
+	rta->rta_len = len;
+	memcpy(RTA_DATA(rta), data, alen);
+	nh->nlmsg_len = NLMSG_ALIGN(nh->nlmsg_len) + RTA_ALIGN(len);
+}
+
+// messages corresponding to different phases seq number
+static char *tun_nl_phase_msg[] = {
+	"initialized",
+	"getting tun interface index",
+	"setting tun interface parameters",
+	"setting tun IPv4 address",
+	"setting tun LL IPv6 address",
+	"setting tun global IPv6 address",
 };
 
 //
@@ -541,8 +726,7 @@ struct in6_ifreq {
 static void inittun(void)
 {
 	struct ifreq ifr;
-	struct in6_ifreq ifr6;
-	struct sockaddr_in sin = {0};
+
 	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_flags = IFF_TUN;
 
@@ -556,104 +740,192 @@ static void inittun(void)
 		int flags = fcntl(tunfd, F_GETFL, 0);
 		fcntl(tunfd, F_SETFL, flags | O_NONBLOCK);
 	}
+
+   if (*config->tundevicename)
+		strncpy(ifr.ifr_name, config->tundevicename, IFNAMSIZ);
+
 	if (ioctl(tunfd, TUNSETIFF, (void *) &ifr) < 0)
 	{
 		LOG(0, 0, 0, "Can't set tun interface: %s\n", strerror(errno));
 		exit(1);
 	}
-	assert(strlen(ifr.ifr_name) < sizeof(config->tundevice));
-	strncpy(config->tundevice, ifr.ifr_name, sizeof(config->tundevice) - 1);
-	ifrfd = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
+	assert(strlen(ifr.ifr_name) < sizeof(config->tundevicename) - 1);
+	strncpy(config->tundevicename, ifr.ifr_name, sizeof(config->tundevicename));
 
-	sin.sin_family = AF_INET;
-	sin.sin_addr.s_addr = config->bind_address ? config->bind_address : 0x01010101; // 1.1.1.1
-	memcpy(&ifr.ifr_addr, &sin, sizeof(struct sockaddr));
+	tunidx = if_nametoindex(config->tundevicename);
+	if (tunidx == 0)
+	{
+		LOG(0, 0, 0, "Can't get tun interface index\n");
+		exit(1);
+	}
 
-	if (ioctl(ifrfd, SIOCSIFADDR, (void *) &ifr) < 0)
 	{
-		LOG(0, 0, 0, "Error setting tun address: %s\n", strerror(errno));
-		exit(1);
-	}
-	/* Bump up the qlen to deal with bursts from the network */
-	ifr.ifr_qlen = 1000;
-	if (ioctl(ifrfd, SIOCSIFTXQLEN, (void *) &ifr) < 0)
-	{
-		LOG(0, 0, 0, "Error setting tun queue length: %s\n", strerror(errno));
-		exit(1);
-	}
-	/* set MTU to modem MRU */
-	ifr.ifr_mtu = MRU;
-	if (ioctl(ifrfd, SIOCSIFMTU, (void *) &ifr) < 0)
-	{
-		LOG(0, 0, 0, "Error setting tun MTU: %s\n", strerror(errno));
-		exit(1);
-	}
-	ifr.ifr_flags = IFF_UP;
-	if (ioctl(ifrfd, SIOCSIFFLAGS, (void *) &ifr) < 0)
-	{
-		LOG(0, 0, 0, "Error setting tun flags: %s\n", strerror(errno));
-		exit(1);
-	}
-	if (ioctl(ifrfd, SIOCGIFINDEX, (void *) &ifr) < 0)
-	{
-		LOG(0, 0, 0, "Error getting tun ifindex: %s\n", strerror(errno));
-		exit(1);
-	}
-	tunidx = ifr.ifr_ifindex;
+		struct {
+			// interface setting
+			struct nlmsghdr nh;
+			union {
+				struct ifinfomsg ifinfo;
+				struct ifaddrmsg ifaddr;
+			} ifmsg;
+			char rtdata[32]; // 32 should be enough
+		} req;
+		uint32_t txqlen, mtu;
+		in_addr_t ip;
 
-	// Only setup IPv6 on the tun device if we have a configured prefix
-	if (config->ipv6_prefix.s6_addr[0]) {
-		ifr6fd = socket(PF_INET6, SOCK_DGRAM, 0);
+		memset(&req, 0, sizeof(req));
 
-		// Link local address is FE80::1
-		memset(&ifr6.ifr6_addr, 0, sizeof(ifr6.ifr6_addr));
-		ifr6.ifr6_addr.s6_addr[0] = 0xFE;
-		ifr6.ifr6_addr.s6_addr[1] = 0x80;
-		ifr6.ifr6_addr.s6_addr[15] = 1;
-		ifr6.ifr6_prefixlen = 64;
-		ifr6.ifr6_ifindex = ifr.ifr_ifindex;
-		if (ioctl(ifr6fd, SIOCSIFADDR, (void *) &ifr6) < 0)
+		req.nh.nlmsg_type = RTM_NEWLINK;
+		req.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_MULTI;
+		req.nh.nlmsg_len = NLMSG_LENGTH(sizeof(req.ifmsg.ifinfo));
+
+		req.ifmsg.ifinfo.ifi_family = AF_UNSPEC;
+		req.ifmsg.ifinfo.ifi_index = tunidx;
+		req.ifmsg.ifinfo.ifi_flags |= IFF_UP; // set interface up
+		req.ifmsg.ifinfo.ifi_change = IFF_UP; // only change this flag
+
+		/* Bump up the qlen to deal with bursts from the network */
+		txqlen = 1000;
+		netlink_addattr(&req.nh, IFLA_TXQLEN, &txqlen, sizeof(txqlen));
+		/* set MTU to modem MRU */
+		mtu = MRU;
+		netlink_addattr(&req.nh, IFLA_MTU, &mtu, sizeof(mtu));
+
+		if (netlink_send(&req.nh) < 0)
+			goto senderror;
+
+		memset(&req, 0, sizeof(req));
+
+		req.nh.nlmsg_type = RTM_NEWADDR;
+		req.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_REPLACE | NLM_F_MULTI;
+		req.nh.nlmsg_len = NLMSG_LENGTH(sizeof(req.ifmsg.ifaddr));
+
+		req.ifmsg.ifaddr.ifa_family = AF_INET;
+		req.ifmsg.ifaddr.ifa_prefixlen = 32;
+		req.ifmsg.ifaddr.ifa_scope = RT_SCOPE_UNIVERSE;
+		req.ifmsg.ifaddr.ifa_index = tunidx;
+
+		if (config->nbmultiaddress > 1)
 		{
-			LOG(0, 0, 0, "Error setting tun IPv6 link local address:"
-				" %s\n", strerror(errno));
+			int i;
+			for (i = 0; i < config->nbmultiaddress ; i++)
+			{
+				ip = config->iftun_n_address[i];
+				netlink_addattr(&req.nh, IFA_LOCAL, &ip, sizeof(ip));
+				if (netlink_send(&req.nh) < 0)
+					goto senderror;
+			}
+		}
+		else
+		{
+			if (config->iftun_address)
+				ip = config->iftun_address;
+			else
+				ip = 0x01010101; // 1.1.1.1
+			netlink_addattr(&req.nh, IFA_LOCAL, &ip, sizeof(ip));
+
+			if (netlink_send(&req.nh) < 0)
+				goto senderror;
 		}
 
-		// Global address is prefix::1
-		memset(&ifr6.ifr6_addr, 0, sizeof(ifr6.ifr6_addr));
-		ifr6.ifr6_addr = config->ipv6_prefix;
-		ifr6.ifr6_addr.s6_addr[15] = 1;
-		ifr6.ifr6_prefixlen = 64;
-		ifr6.ifr6_ifindex = ifr.ifr_ifindex;
-		if (ioctl(ifr6fd, SIOCSIFADDR, (void *) &ifr6) < 0)
-		{
-			LOG(0, 0, 0, "Error setting tun IPv6 global address: %s\n",
-				strerror(errno));
+
+
+		// Only setup IPv6 on the tun device if we have a configured prefix
+		if (config->ipv6_prefix.s6_addr[0]) {
+			struct in6_addr ip6;
+
+			memset(&req, 0, sizeof(req));
+
+			req.nh.nlmsg_type = RTM_NEWADDR;
+			req.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_REPLACE | NLM_F_MULTI;
+			req.nh.nlmsg_len = NLMSG_LENGTH(sizeof(req.ifmsg.ifaddr));
+
+			req.ifmsg.ifaddr.ifa_family = AF_INET6;
+			req.ifmsg.ifaddr.ifa_prefixlen = 64;
+			req.ifmsg.ifaddr.ifa_scope = RT_SCOPE_LINK;
+			req.ifmsg.ifaddr.ifa_index = tunidx;
+
+			// Link local address is FE80::1
+			memset(&ip6, 0, sizeof(ip6));
+			ip6.s6_addr[0] = 0xFE;
+			ip6.s6_addr[1] = 0x80;
+			ip6.s6_addr[15] = 1;
+			netlink_addattr(&req.nh, IFA_LOCAL, &ip6, sizeof(ip6));
+
+			if (netlink_send(&req.nh) < 0)
+				goto senderror;
+
+			memset(&req, 0, sizeof(req));
+
+			req.nh.nlmsg_type = RTM_NEWADDR;
+			req.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_REPLACE | NLM_F_MULTI;
+			req.nh.nlmsg_len = NLMSG_LENGTH(sizeof(req.ifmsg.ifaddr));
+
+			req.ifmsg.ifaddr.ifa_family = AF_INET6;
+			req.ifmsg.ifaddr.ifa_prefixlen = 64;
+			req.ifmsg.ifaddr.ifa_scope = RT_SCOPE_UNIVERSE;
+			req.ifmsg.ifaddr.ifa_index = tunidx;
+
+			// Global address is prefix::1
+			ip6 = config->ipv6_prefix;
+			ip6.s6_addr[15] = 1;
+			netlink_addattr(&req.nh, IFA_LOCAL, &ip6, sizeof(ip6));
+
+			if (netlink_send(&req.nh) < 0)
+				goto senderror;
 		}
+
+		memset(&req, 0, sizeof(req));
+
+		req.nh.nlmsg_type = NLMSG_DONE;
+		req.nh.nlmsg_len = NLMSG_LENGTH(0);
+
+		if (netlink_send(&req.nh) < 0)
+			goto senderror;
+
+		// if we get an error for seqnum < min_initok_nlseqnum,
+		// we must exit as initialization went wrong
+		if (config->ipv6_prefix.s6_addr[0])
+			min_initok_nlseqnum = 5 + 1; // idx + if + addr + 2*addr6
+		else
+			min_initok_nlseqnum = 3 + 1; // idx + if + addr
 	}
+
+	return;
+
+senderror:
+	LOG(0, 0, 0, "Error while setting up tun device: %s\n", strerror(errno));
+	exit(1);
 }
 
-// set up UDP ports
-static void initudp(void)
+// set up LAC UDP ports
+static void initlacudp(void)
 {
 	int on = 1;
 	struct sockaddr_in addr;
 
-	// Tunnel
+	// Tunnel to Remote LNS
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
-	addr.sin_port = htons(L2TPPORT);
-	addr.sin_addr.s_addr = config->bind_address;
-	udpfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	setsockopt(udpfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+	addr.sin_port = htons(config->bind_portremotelns);
+	addr.sin_addr.s_addr = config->bind_address_remotelns;
+	udplacfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	setsockopt(udplacfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
 	{
-		int flags = fcntl(udpfd, F_GETFL, 0);
-		fcntl(udpfd, F_SETFL, flags | O_NONBLOCK);
+		int flags = fcntl(udplacfd, F_GETFL, 0);
+		fcntl(udplacfd, F_SETFL, flags | O_NONBLOCK);
 	}
-	if (bind(udpfd, (void *) &addr, sizeof(addr)) < 0)
+	if (bind(udplacfd, (struct sockaddr *) &addr, sizeof(addr)) < 0)
 	{
-		LOG(0, 0, 0, "Error in UDP bind: %s\n", strerror(errno));
+		LOG(0, 0, 0, "Error in UDP REMOTE LNS bind: %s\n", strerror(errno));
 		exit(1);
 	}
+}
+
+// set up control ports
+static void initcontrol(void)
+{
+	int on = 1;
+	struct sockaddr_in addr;
 
 	// Control
 	memset(&addr, 0, sizeof(addr));
@@ -662,11 +934,18 @@ static void initudp(void)
 	controlfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	setsockopt(controlfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
 	setsockopt(controlfd, SOL_IP, IP_PKTINFO, &on, sizeof(on)); // recvfromto
-	if (bind(controlfd, (void *) &addr, sizeof(addr)) < 0)
+	if (bind(controlfd, (struct sockaddr *) &addr, sizeof(addr)) < 0)
 	{
 		LOG(0, 0, 0, "Error in control bind: %s\n", strerror(errno));
 		exit(1);
 	}
+}
+
+// set up Dynamic Authorization Extensions to RADIUS port
+static void initdae(void)
+{
+	int on = 1;
+	struct sockaddr_in addr;
 
 	// Dynamic Authorization Extensions to RADIUS
 	memset(&addr, 0, sizeof(addr));
@@ -675,14 +954,35 @@ static void initudp(void)
 	daefd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	setsockopt(daefd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
 	setsockopt(daefd, SOL_IP, IP_PKTINFO, &on, sizeof(on)); // recvfromto
-	if (bind(daefd, (void *) &addr, sizeof(addr)) < 0)
+	if (bind(daefd, (struct sockaddr *) &addr, sizeof(addr)) < 0)
 	{
 		LOG(0, 0, 0, "Error in DAE bind: %s\n", strerror(errno));
 		exit(1);
 	}
+}
 
-	// Intercept
-	snoopfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+// set up UDP ports
+static void initudp(int * pudpfd, in_addr_t ip_bind)
+{
+	int on = 1;
+	struct sockaddr_in addr;
+
+	// Tunnel
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(L2TPPORT);
+	addr.sin_addr.s_addr = ip_bind;
+	(*pudpfd) = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	setsockopt((*pudpfd), SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+	{
+		int flags = fcntl((*pudpfd), F_GETFL, 0);
+		fcntl((*pudpfd), F_SETFL, flags | O_NONBLOCK);
+	}
+	if (bind((*pudpfd), (struct sockaddr *) &addr, sizeof(addr)) < 0)
+	{
+		LOG(0, 0, 0, "Error in UDP bind: %s\n", strerror(errno));
+		exit(1);
+	}
 }
 
 //
@@ -700,39 +1000,43 @@ static void initudp(void)
 // IP address.
 //
 
-static int lookup_ipmap(in_addr_t ip)
+static sessionidt lookup_ipmap(in_addr_t ip)
 {
 	uint8_t *a = (uint8_t *) &ip;
-	uint8_t **d = (uint8_t **) ip_hash;
+	union iphash *h = ip_hash;
 
-	if (!(d = (uint8_t **) d[(size_t) *a++])) return 0;
-	if (!(d = (uint8_t **) d[(size_t) *a++])) return 0;
-	if (!(d = (uint8_t **) d[(size_t) *a++])) return 0;
+	if (!(h = h[*a++].idx)) return 0;
+	if (!(h = h[*a++].idx)) return 0;
+	if (!(h = h[*a++].idx)) return 0;
 
-	return (int) (intptr_t) d[(size_t) *a];
+	return h[*a].sess;
 }
 
-static int lookup_ipv6map(struct in6_addr ip)
+static sessionidt lookup_ipv6map(struct in6_addr ip)
 {
 	struct ipv6radix *curnode;
 	int i;
 	int s;
 	char ipv6addr[INET6_ADDRSTRLEN];
 
-	curnode = &ipv6_hash[ip.s6_addr[0]];
+	curnode = &ipv6_hash[((ip.s6_addr[0]) & 0xF0)>>4];
 	i = 1;
 	s = curnode->sess;
 
-	while (s == 0 && i < 15 && curnode->branch != NULL)
+	while (s == 0 && i < 32 && curnode->branch != NULL)
 	{
-		curnode = &curnode->branch[ip.s6_addr[i]];
+		if (i & 1)
+			curnode = &curnode->branch[ip.s6_addr[i>>1] & 0x0F];
+		else
+			curnode = &curnode->branch[(ip.s6_addr[i>>1] & 0xF0)>>4];
+
 		s = curnode->sess;
 		i++;
 	}
 
 	LOG(4, s, session[s].tunnel, "Looking up address %s and got %d\n",
-    			inet_ntop(AF_INET6, &ip, ipv6addr,
-				INET6_ADDRSTRLEN),
+			inet_ntop(AF_INET6, &ip, ipv6addr,
+			INET6_ADDRSTRLEN),
 			s);
 
 	return s;
@@ -740,18 +1044,18 @@ static int lookup_ipv6map(struct in6_addr ip)
 
 sessionidt sessionbyip(in_addr_t ip)
 {
-	int s = lookup_ipmap(ip);
+	sessionidt s = lookup_ipmap(ip);
 	CSTAT(sessionbyip);
 
 	if (s > 0 && s < MAXSESSION && session[s].opened)
-		return (sessionidt) s;
+		return s;
 
 	return 0;
 }
 
 sessionidt sessionbyipv6(struct in6_addr ip)
 {
-	int s;
+	sessionidt s;
 	CSTAT(sessionbyipv6);
 
 	if (!memcmp(&config->ipv6_prefix, &ip, 8) ||
@@ -759,11 +1063,26 @@ sessionidt sessionbyipv6(struct in6_addr ip)
 		 ip.s6_addr[1] == 0x80 &&
 		 ip.s6_addr16[1] == 0 &&
 		 ip.s6_addr16[2] == 0 &&
-		 ip.s6_addr16[3] == 0)) {
-		s = lookup_ipmap(*(in_addr_t *) &ip.s6_addr[8]);
+		 ip.s6_addr16[3] == 0))
+	{
+		in_addr_t *pipv4 = (in_addr_t *) &ip.s6_addr[8];
+		s = lookup_ipmap(*pipv4);
 	} else {
 		s = lookup_ipv6map(ip);
 	}
+
+	if (s > 0 && s < MAXSESSION && session[s].opened)
+		return s;
+
+	return 0;
+}
+
+sessionidt sessionbyipv6new(struct in6_addr ip)
+{
+	sessionidt s;
+	CSTAT(sessionbyipv6new);
+
+	s = lookup_ipv6map(ip);
 
 	if (s > 0 && s < MAXSESSION && session[s].opened)
 		return s;
@@ -777,25 +1096,22 @@ sessionidt sessionbyipv6(struct in6_addr ip)
 //
 // (It's actually cached in network order)
 //
-static void cache_ipmap(in_addr_t ip, int s)
+static void cache_ipmap(in_addr_t ip, sessionidt s)
 {
 	in_addr_t nip = htonl(ip);	// MUST be in network order. I.e. MSB must in be ((char *) (&ip))[0]
 	uint8_t *a = (uint8_t *) &nip;
-	uint8_t **d = (uint8_t **) ip_hash;
+	union iphash *h = ip_hash;
 	int i;
 
 	for (i = 0; i < 3; i++)
 	{
-		if (!d[(size_t) a[i]])
-		{
-			if (!(d[(size_t) a[i]] = calloc(256, sizeof(void *))))
-				return;
-		}
+		if (!(h[a[i]].idx || (h[a[i]].idx = calloc(256, sizeof(union iphash)))))
+			return;
 
-		d = (uint8_t **) d[(size_t) a[i]];
+		h = h[a[i]].idx;
 	}
 
-	d[(size_t) a[3]] = (uint8_t *) (intptr_t) s;
+	h[a[3]].sess = s;
 
 	if (s > 0)
 		LOG(4, s, session[s].tunnel, "Caching ip address %s\n", fmtaddr(nip, 0));
@@ -810,25 +1126,31 @@ static void uncache_ipmap(in_addr_t ip)
 	cache_ipmap(ip, 0);	// Assign it to the NULL session.
 }
 
-static void cache_ipv6map(struct in6_addr ip, int prefixlen, int s)
+static void cache_ipv6map(struct in6_addr ip, int prefixlen, sessionidt s)
 {
 	int i;
-	int bytes;
+	int niblles;
 	struct ipv6radix *curnode;
 	char ipv6addr[INET6_ADDRSTRLEN];
 
-	curnode = &ipv6_hash[ip.s6_addr[0]];
+	curnode = &ipv6_hash[((ip.s6_addr[0]) & 0xF0)>>4];
 
-	bytes = prefixlen >> 3;
+	niblles = prefixlen >> 2;
 	i = 1;
-	while (i < bytes) {
+
+	while (i < niblles)
+	{
 		if (curnode->branch == NULL)
 		{
-			if (!(curnode->branch = calloc(256,
-					sizeof (struct ipv6radix))))
+			if (!(curnode->branch = calloc(16, sizeof (struct ipv6radix))))
 				return;
 		}
-		curnode = &curnode->branch[ip.s6_addr[i]];
+
+		if (i & 1)
+			curnode = &curnode->branch[ip.s6_addr[i>>1] & 0x0F];
+		else
+			curnode = &curnode->branch[(ip.s6_addr[i>>1] & 0xF0)>>4];
+
 		i++;
 	}
 
@@ -836,22 +1158,22 @@ static void cache_ipv6map(struct in6_addr ip, int prefixlen, int s)
 
 	if (s > 0)
 		LOG(4, s, session[s].tunnel, "Caching ip address %s/%d\n",
-	    			inet_ntop(AF_INET6, &ip, ipv6addr, 
-					INET6_ADDRSTRLEN),
+				inet_ntop(AF_INET6, &ip, ipv6addr,
+				INET6_ADDRSTRLEN),
 				prefixlen);
 	else if (s == 0)
 		LOG(4, 0, 0, "Un-caching ip address %s/%d\n",
-	    			inet_ntop(AF_INET6, &ip, ipv6addr, 
-					INET6_ADDRSTRLEN),
+				inet_ntop(AF_INET6, &ip, ipv6addr,
+				INET6_ADDRSTRLEN),
 				prefixlen);
 }
 
 //
 // CLI list to dump current ipcache.
 //
-int cmd_show_ipcache(struct cli_def *cli, char *command, char **argv, int argc)
+int cmd_show_ipcache(struct cli_def *cli, const char *command, char **argv, int argc)
 {
-	char **d = (char **) ip_hash, **e, **f, **g;
+	union iphash *d = ip_hash, *e, *f, *g;
 	int i, j, k, l;
 	int count = 0;
 
@@ -862,24 +1184,28 @@ int cmd_show_ipcache(struct cli_def *cli, char *command, char **argv, int argc)
 
 	for (i = 0; i < 256; ++i)
 	{
-		if (!d[i])
+		if (!d[i].idx)
 			continue;
-		e = (char **) d[i];
+
+		e = d[i].idx;
 		for (j = 0; j < 256; ++j)
 		{
-			if (!e[j])
+			if (!e[j].idx)
 				continue;
-			f = (char **) e[j];
+
+			f = e[j].idx;
 			for (k = 0; k < 256; ++k)
 			{
-				if (!f[k])
+				if (!f[k].idx)
 					continue;
-				g = (char **)f[k];
+
+				g = f[k].idx;
 				for (l = 0; l < 256; ++l)
 				{
-					if (!g[l])
+					if (!g[l].sess)
 						continue;
-					cli_print(cli, "%7d %d.%d.%d.%d", (int) (intptr_t) g[l], i, j, k, l);
+
+					cli_print(cli, "%7d %d.%d.%d.%d", g[l].sess, i, j, k, l);
 					++count;
 				}
 			}
@@ -888,7 +1214,6 @@ int cmd_show_ipcache(struct cli_def *cli, char *command, char **argv, int argc)
 	cli_print(cli, "%d entries in cache", count);
 	return CLI_OK;
 }
-
 
 // Find session by username, 0 for not found
 // walled garden users aren't authenticated, so the username is
@@ -974,6 +1299,12 @@ void tunnelsend(uint8_t * buf, uint16_t l, tunnelidt t)
 		return;
 	}
 
+	if (t == TUNNEL_ID_PPPOE)
+	{
+		pppoe_sess_send(buf, l, t);
+		return;
+	}
+
 	if (!tunnel[t].ip)
 	{
 		LOG(1, 0, t, "Error sending data out tunnel: no remote endpoint (tunnel not set up)\n");
@@ -1001,10 +1332,10 @@ void tunnelsend(uint8_t * buf, uint16_t l, tunnelidt t)
 		}
 	}
 
-	if (sendto(udpfd, buf, l, 0, (void *) &addr, sizeof(addr)) < 0)
+	if (sendto(udpfd[tunnel[t].indexudp], buf, l, 0, (void *) &addr, sizeof(addr)) < 0)
 	{
 		LOG(0, ntohs((*(uint16_t *) (buf + 6))), t, "Error sending data out tunnel: %s (udpfd=%d, buf=%p, len=%d, dest=%s)\n",
-				strerror(errno), udpfd, buf, l, inet_ntoa(addr.sin_addr));
+				strerror(errno), udpfd[tunnel[t].indexudp], buf, l, inet_ntoa(addr.sin_addr));
 		STAT(tunnel_tx_errors);
 		return;
 	}
@@ -1078,19 +1409,88 @@ void adjust_tcp_mss(sessionidt s, tunnelidt t, uint8_t *buf, int len, uint8_t *t
 	*(uint16_t *) (tcp + 16) = htons(sum + (sum >> 16));
 }
 
+void processmpframe(sessionidt s, tunnelidt t, uint8_t *p, uint16_t l, uint8_t extra)
+{
+	uint16_t proto;
+	if (extra) {
+		// Skip the four extra bytes
+		p += 4;
+		l -= 4;
+	}
+
+        if (*p & 1)
+        {
+                proto = *p++;
+                l--;
+        }
+        else
+        {
+                proto = ntohs(*(uint16_t *) p);
+                p += 2;
+                l -= 2;
+        }
+        if (proto == PPPIP)
+        {
+                if (session[s].die)
+                {
+                        LOG(4, s, t, "MPPP: Session %d is closing.  Don't process PPP packets\n", s);
+                        return;              // closing session, PPP not processed
+                }
+                session[s].last_packet = session[s].last_data = time_now;
+                processipin(s, t, p, l);
+        }
+        else if (proto == PPPIPV6 && config->ipv6_prefix.s6_addr[0])
+        {
+                if (session[s].die)
+                {
+                        LOG(4, s, t, "MPPP: Session %d is closing.  Don't process PPP packets\n", s);
+                        return;              // closing session, PPP not processed
+                }
+
+                session[s].last_packet = session[s].last_data = time_now;
+                processipv6in(s, t, p, l);
+        }
+	else if (proto == PPPIPCP)
+        {
+                session[s].last_packet = session[s].last_data = time_now;
+                processipcp(s, t, p, l);
+        }
+        else if (proto == PPPCCP)
+        {
+                session[s].last_packet = session[s].last_data = time_now;
+                processccp(s, t, p, l);
+        }
+        else
+        {
+                LOG(2, s, t, "MPPP: Unsupported MP protocol 0x%04X received\n",proto);
+        }
+}
+
+static void update_session_out_stat(sessionidt s, sessiont *sp, int len)
+{
+	increment_counter(&sp->cout, &sp->cout_wrap, len); // byte count
+	sp->cout_delta += len;
+	sp->pout++;
+	sp->last_data = time_now;
+
+	sess_local[s].cout += len;	// To send to master..
+	sess_local[s].pout++;
+}
+
 // process outgoing (to tunnel) IP
 //
-static void processipout(uint8_t *buf, int len)
+// (i.e. this routine writes to data[-8]).
+void processipout(uint8_t *buf, int len)
 {
 	sessionidt s;
 	sessiont *sp;
 	tunnelidt t;
-	in_addr_t ip;
+	in_addr_t ip, ip_src;
 
 	uint8_t *data = buf;	// Keep a copy of the originals.
 	int size = len;
 
-	uint8_t b[MAXETHER + 20];
+	uint8_t fragbuf[MAXETHER + 20];
 
 	CSTAT(processipout);
 
@@ -1118,6 +1518,7 @@ static void processipout(uint8_t *buf, int len)
 		return;
 	}
 
+	ip_src = *(uint32_t *)(buf + 12);
 	ip = *(uint32_t *)(buf + 16);
 	if (!(s = sessionbyip(ip)))
 	{
@@ -1139,7 +1540,14 @@ static void processipout(uint8_t *buf, int len)
 		}
 		return;
 	}
+
 	t = session[s].tunnel;
+	if (len > session[s].mru || (session[s].mrru && len > session[s].mrru))
+	{
+		LOG(3, s, t, "Packet size more than session MRU\n");
+		return;
+	}
+
 	sp = &session[s];
 
 	// DoS prevention: enforce a maximum number of packets per 0.1s for a session
@@ -1195,12 +1603,15 @@ static void processipout(uint8_t *buf, int len)
 
 	if (sp->tbf_out)
 	{
-		// Are we throttling this session?
-		if (config->cluster_iam_master)
-			tbf_queue_packet(sp->tbf_out, data, size);
-		else
-			master_throttle_packet(sp->tbf_out, data, size);
-		return;
+		if (!config->no_throttle_local_IP || !sessionbyip(ip_src))
+		{
+			// Are we throttling this session?
+			if (config->cluster_iam_master)
+				tbf_queue_packet(sp->tbf_out, data, size);
+			else
+				master_throttle_packet(sp->tbf_out, data, size);
+			return;
+		}
 	}
 
 	if (sp->walled_garden && !config->cluster_iam_master)
@@ -1210,13 +1621,120 @@ static void processipout(uint8_t *buf, int len)
 		return;
 	}
 
-	LOG(5, s, t, "Ethernet -> Tunnel (%d bytes)\n", len);
-
-	// Add on L2TP header
+	if(session[s].bundle != 0 && bundle[session[s].bundle].num_of_links > 1)
 	{
-		uint8_t *p = makeppp(b, sizeof(b), buf, len, s, t, PPPIP);
-		if (!p) return;
-		tunnelsend(b, len + (p-b), t); // send it...
+
+		if (!config->cluster_iam_master)
+		{
+			// The MPPP packets must be managed by the Master.
+			master_forward_mppp_packet(s, data, size);
+			return;
+		}
+
+		// Add on L2TP header
+		sessionidt members[MAXBUNDLESES];
+		bundleidt bid = session[s].bundle;
+		bundlet *b = &bundle[bid];
+		uint32_t num_of_links, nb_opened;
+		int i;
+
+		num_of_links = b->num_of_links;
+		nb_opened = 0;
+		for (i = 0;i < num_of_links;i++)
+		{
+			s = b->members[i];
+			if (session[s].ppp.lcp == Opened)
+			{
+				members[nb_opened] = s;
+				nb_opened++;
+			}
+		}
+
+		if (nb_opened < 1)
+		{
+			LOG(3, s, t, "MPPP: PROCESSIPOUT ERROR, no session opened in bundle:%d\n", bid);
+			return;
+		}
+
+		num_of_links = nb_opened;
+		b->current_ses = (b->current_ses + 1) % num_of_links;
+		s = members[b->current_ses];
+		t = session[s].tunnel;
+		sp = &session[s];
+		LOG(4, s, t, "MPPP: (1)Session number becomes: %d\n", s);
+
+		if (num_of_links > 1)
+		{
+			if(len > MINFRAGLEN)
+			{
+				//for rotate traffic among the member links
+				uint32_t divisor = num_of_links;
+				if (divisor > 2)
+					divisor = divisor/2 + (divisor & 1);
+
+				// Partition the packet to "num_of_links" fragments
+				uint32_t fraglen = len / divisor;
+				uint32_t last_fraglen = fraglen + len % divisor;
+				uint32_t remain = len;
+
+				// send the first packet
+				uint8_t *p = makeppp(fragbuf, sizeof(fragbuf), buf, fraglen, s, t, PPPIP, 0, bid, MP_BEGIN);
+				if (!p) return;
+				tunnelsend(fragbuf, fraglen + (p-fragbuf), t); // send it...
+
+				// statistics
+				update_session_out_stat(s, sp, fraglen);
+
+				remain -= fraglen;
+				while (remain > last_fraglen)
+				{
+					b->current_ses = (b->current_ses + 1) % num_of_links;
+					s = members[b->current_ses];
+					t = session[s].tunnel;
+					sp = &session[s];
+					LOG(4, s, t, "MPPP: (2)Session number becomes: %d\n", s);
+					p = makeppp(fragbuf, sizeof(fragbuf), buf+(len - remain), fraglen, s, t, PPPIP, 0, bid, 0);
+					if (!p) return;
+					tunnelsend(fragbuf, fraglen + (p-fragbuf), t); // send it...
+					update_session_out_stat(s, sp, fraglen);
+					remain -= fraglen;
+				}
+				// send the last fragment
+				b->current_ses = (b->current_ses + 1) % num_of_links;
+				s = members[b->current_ses];
+				t = session[s].tunnel;
+				sp = &session[s];
+				LOG(4, s, t, "MPPP: (2)Session number becomes: %d\n", s);
+				p = makeppp(fragbuf, sizeof(fragbuf), buf+(len - remain), remain, s, t, PPPIP, 0, bid, MP_END);
+				if (!p) return;
+				tunnelsend(fragbuf, remain + (p-fragbuf), t); // send it...
+				update_session_out_stat(s, sp, remain);
+				if (remain != last_fraglen)
+					LOG(3, s, t, "PROCESSIPOUT ERROR REMAIN != LAST_FRAGLEN, %d != %d\n", remain, last_fraglen);
+			}
+			else
+			{
+				// Send it as one frame
+				uint8_t *p = makeppp(fragbuf, sizeof(fragbuf), buf, len, s, t, PPPIP, 0, bid, MP_BOTH_BITS);
+				if (!p) return;
+				tunnelsend(fragbuf, len + (p-fragbuf), t); // send it...
+				LOG(4, s, t, "MPPP: packet sent as one frame\n");
+				update_session_out_stat(s, sp, len);
+			}
+		}
+		else
+		{
+			// Send it as one frame (NO MPPP Frame)
+			uint8_t *p = opt_makeppp(buf, len, s, t, PPPIP, 0, 0, 0);
+			tunnelsend(p, len + (buf-p), t); // send it...
+			update_session_out_stat(s, sp, len);
+		}
+	}
+	else
+	{
+		uint8_t *p = opt_makeppp(buf, len, s, t, PPPIP, 0, 0, 0);
+		tunnelsend(p, len + (buf-p), t); // send it...
+		update_session_out_stat(s, sp, len);
 	}
 
 	// Snooping this session, send it to intercept box
@@ -1237,9 +1755,6 @@ static void processipout(uint8_t *buf, int len)
 	sp->cout_delta += len;
 	sp->pout++;
 	udp_tx += len;
-
-	sess_local[s].cout += len;	// To send to master..
-	sess_local[s].pout++;
 }
 
 // process outgoing (to tunnel) IPv6
@@ -1249,7 +1764,6 @@ static void processipv6out(uint8_t * buf, int len)
 	sessionidt s;
 	sessiont *sp;
 	tunnelidt t;
-	in_addr_t ip;
 	struct in6_addr ip6;
 
 	uint8_t *data = buf;	// Keep a copy of the originals.
@@ -1288,10 +1802,9 @@ static void processipv6out(uint8_t * buf, int len)
 
 	if (s == 0)
 	{
-		ip = *(uint32_t *)(buf + 32);
-		s = sessionbyip(ip);
+		s = sessionbyipv6new(ip6);
 	}
-	
+
 	if (s == 0)
 	{
 		// Is this a packet for a session that doesn't exist?
@@ -1310,8 +1823,18 @@ static void processipv6out(uint8_t * buf, int len)
 		}
 		return;
 	}
+	if (session[s].bundle && bundle[session[s].bundle].num_of_links > 1)
+	{
+		bundleidt bid = session[s].bundle;
+		bundlet *b = &bundle[bid];
+
+		b->current_ses = (b->current_ses + 1) % b->num_of_links;
+		s = b->members[b->current_ses];
+		LOG(3, s, session[s].tunnel, "MPPP: Session number becomes: %u\n", s);
+	}
 	t = session[s].tunnel;
 	sp = &session[s];
+	sp->last_data = time_now;
 
 	// FIXME: add DoS prevention/filters?
 
@@ -1335,7 +1858,7 @@ static void processipv6out(uint8_t * buf, int len)
 
 	// Add on L2TP header
 	{
-		uint8_t *p = makeppp(b, sizeof(b), buf, len, s, t, PPPIPV6);
+		uint8_t *p = makeppp(b, sizeof(b), buf, len, s, t, PPPIPV6, 0, 0, 0);
 		if (!p) return;
 		tunnelsend(b, len + (p-b), t); // send it...
 	}
@@ -1371,7 +1894,8 @@ static void send_ipout(sessionidt s, uint8_t *buf, int len)
 {
 	sessiont *sp;
 	tunnelidt t;
-	in_addr_t ip;
+	uint8_t *p;
+	uint8_t *data = buf;	// Keep a copy of the originals.
 
 	uint8_t b[MAXETHER + 20];
 
@@ -1385,8 +1909,6 @@ static void send_ipout(sessionidt s, uint8_t *buf, int len)
 	buf += 4;
 	len -= 4;
 
-	ip = *(in_addr_t *)(buf + 16);
-
 	if (!session[s].ip)
 		return;
 
@@ -1396,11 +1918,14 @@ static void send_ipout(sessionidt s, uint8_t *buf, int len)
 	LOG(5, s, t, "Ethernet -> Tunnel (%d bytes)\n", len);
 
 	// Add on L2TP header
-	{
-		uint8_t *p = makeppp(b, sizeof(b), buf, len, s, t, PPPIP);
-		if (!p) return;
-		tunnelsend(b, len + (p-b), t); // send it...
-	}
+	if (*(uint16_t *) (data + 2) == htons(PKTIPV6))
+		p = makeppp(b, sizeof(b), buf, len, s, t, PPPIPV6, 0, 0, 0); // IPV6
+	else
+		p = makeppp(b, sizeof(b), buf, len, s, t, PPPIP, 0, 0, 0); // IPV4
+
+	if (!p) return;
+
+	tunnelsend(b, len + (p-b), t); // send it...
 
 	// Snooping this session.
 	if (sp->snoop_ip && sp->snoop_port)
@@ -1429,10 +1954,11 @@ static void send_ipout(sessionidt s, uint8_t *buf, int len)
 static void control16(controlt * c, uint16_t avp, uint16_t val, uint8_t m)
 {
 	uint16_t l = (m ? 0x8008 : 0x0008);
-	*(uint16_t *) (c->buf + c->length + 0) = htons(l);
-	*(uint16_t *) (c->buf + c->length + 2) = htons(0);
-	*(uint16_t *) (c->buf + c->length + 4) = htons(avp);
-	*(uint16_t *) (c->buf + c->length + 6) = htons(val);
+	uint16_t *pint16 = (uint16_t *) (c->buf + c->length + 0);
+	pint16[0] = htons(l);
+	pint16[1] = htons(0);
+	pint16[2] = htons(avp);
+	pint16[3] = htons(val);
 	c->length += 8;
 }
 
@@ -1440,10 +1966,12 @@ static void control16(controlt * c, uint16_t avp, uint16_t val, uint8_t m)
 static void control32(controlt * c, uint16_t avp, uint32_t val, uint8_t m)
 {
 	uint16_t l = (m ? 0x800A : 0x000A);
-	*(uint16_t *) (c->buf + c->length + 0) = htons(l);
-	*(uint16_t *) (c->buf + c->length + 2) = htons(0);
-	*(uint16_t *) (c->buf + c->length + 4) = htons(avp);
-	*(uint32_t *) (c->buf + c->length + 6) = htonl(val);
+	uint16_t *pint16 = (uint16_t *) (c->buf + c->length + 0);
+	uint32_t *pint32 = (uint32_t *) (c->buf + c->length + 6);
+	pint16[0] = htons(l);
+	pint16[1] = htons(0);
+	pint16[2] = htons(avp);
+	pint32[0] = htonl(val);
 	c->length += 10;
 }
 
@@ -1451,9 +1979,10 @@ static void control32(controlt * c, uint16_t avp, uint32_t val, uint8_t m)
 static void controls(controlt * c, uint16_t avp, char *val, uint8_t m)
 {
 	uint16_t l = ((m ? 0x8000 : 0) + strlen(val) + 6);
-	*(uint16_t *) (c->buf + c->length + 0) = htons(l);
-	*(uint16_t *) (c->buf + c->length + 2) = htons(0);
-	*(uint16_t *) (c->buf + c->length + 4) = htons(avp);
+	uint16_t *pint16 = (uint16_t *) (c->buf + c->length + 0);
+	pint16[0] = htons(l);
+	pint16[1] = htons(0);
+	pint16[2] = htons(avp);
 	memcpy(c->buf + c->length + 6, val, strlen(val));
 	c->length += 6 + strlen(val);
 }
@@ -1462,9 +1991,10 @@ static void controls(controlt * c, uint16_t avp, char *val, uint8_t m)
 static void controlb(controlt * c, uint16_t avp, uint8_t *val, unsigned int len, uint8_t m)
 {
 	uint16_t l = ((m ? 0x8000 : 0) + len + 6);
-	*(uint16_t *) (c->buf + c->length + 0) = htons(l);
-	*(uint16_t *) (c->buf + c->length + 2) = htons(0);
-	*(uint16_t *) (c->buf + c->length + 4) = htons(avp);
+	uint16_t *pint16 = (uint16_t *) (c->buf + c->length + 0);
+	pint16[0] = htons(l);
+	pint16[1] = htons(0);
+	pint16[2] = htons(avp);
 	memcpy(c->buf + c->length + 6, val, len);
 	c->length += 6 + len;
 }
@@ -1482,7 +2012,8 @@ static controlt *controlnew(uint16_t mtype)
 	}
 	assert(c);
 	c->next = 0;
-	*(uint16_t *) (c->buf + 0) = htons(0xC802); // flags/ver
+	c->buf[0] = 0xC8; // flags
+	c->buf[1] = 0x02; // ver
 	c->length = 12;
 	control16(c, 0, mtype, 1);
 	return c;
@@ -1492,26 +2023,27 @@ static controlt *controlnew(uint16_t mtype)
 // (ZLB send).
 static void controlnull(tunnelidt t)
 {
-	uint8_t buf[12];
+	uint16_t buf[6];
 	if (tunnel[t].controlc)	// Messages queued; They will carry the ack.
 		return;
 
-	*(uint16_t *) (buf + 0) = htons(0xC802); // flags/ver
-	*(uint16_t *) (buf + 2) = htons(12); // length
-	*(uint16_t *) (buf + 4) = htons(tunnel[t].far); // tunnel
-	*(uint16_t *) (buf + 6) = htons(0); // session
-	*(uint16_t *) (buf + 8) = htons(tunnel[t].ns); // sequence
-	*(uint16_t *) (buf + 10) = htons(tunnel[t].nr); // sequence
-	tunnelsend(buf, 12, t);
+	buf[0] = htons(0xC802); // flags/ver
+	buf[1] = htons(12); // length
+	buf[2] = htons(tunnel[t].far); // tunnel
+	buf[3] = htons(0); // session
+	buf[4] = htons(tunnel[t].ns); // sequence
+	buf[5] = htons(tunnel[t].nr); // sequence
+	tunnelsend((uint8_t *)buf, 12, t);
 }
 
 // add a control message to a tunnel, and send if within window
 static void controladd(controlt *c, sessionidt far, tunnelidt t)
 {
-	*(uint16_t *) (c->buf + 2) = htons(c->length); // length
-	*(uint16_t *) (c->buf + 4) = htons(tunnel[t].far); // tunnel
-	*(uint16_t *) (c->buf + 6) = htons(far); // session
-	*(uint16_t *) (c->buf + 8) = htons(tunnel[t].ns); // sequence
+	uint16_t *pint16 = (uint16_t *) (c->buf + 2);
+	pint16[0] = htons(c->length); // length
+	pint16[1] = htons(tunnel[t].far); // tunnel
+	pint16[2] = htons(far); // session
+	pint16[3] = htons(tunnel[t].ns); // sequence
 	tunnel[t].ns++;              // advance sequence
 	// link in message in to queue
 	if (tunnel[t].controlc)
@@ -1624,7 +2156,9 @@ void filter_session(sessionidt s, int filter_in, int filter_out)
 void sessionshutdown(sessionidt s, char const *reason, int cdn_result, int cdn_error, int term_cause)
 {
 	int walled_garden = session[s].walled_garden;
-
+	bundleidt b = session[s].bundle;
+	//delete routes only for last session in bundle (in case of MPPP)
+	int del_routes = !b || (bundle[b].num_of_links == 1);
 
 	CSTAT(sessionshutdown);
 
@@ -1669,55 +2203,141 @@ void sessionshutdown(sessionidt s, char const *reason, int cdn_result, int cdn_e
 			memcpy(&shut_acct[shut_acct_n++], &session[s], sizeof(session[s]));
 	}
 
-	if (session[s].ip && term_cause != TERM_CALLBACK) // Don't drop the route if it's the duplicate session 
+	if (!session[s].die)
+		session[s].die = TIME + 150; // Clean up in 15 seconds
+
+    if (session[s].ip && term_cause != TERM_CALLBACK) // Don't drop the route if it's the duplicate session 
 	{                          			  // that has 'called-back'!
 		// IP allocated, clear and unroute
 		int r;
 		int routed = 0;
 		for (r = 0; r < MAXROUTE && session[s].route[r].ip; r++)
 		{
-			if ((session[s].ip & session[s].route[r].mask) ==
-			    (session[s].route[r].ip & session[s].route[r].mask))
+			if ((session[s].ip >> (32-session[s].route[r].prefixlen)) ==
+			    (session[s].route[r].ip >> (32-session[s].route[r].prefixlen)))
 				routed++;
 
-			routeset(s, session[s].route[r].ip, session[s].route[r].mask, 0, 0);
+			if (del_routes) routeset(s, session[s].route[r].ip, session[s].route[r].prefixlen, 0, 0);
 			session[s].route[r].ip = 0;
 		}
 
 		if (session[s].ip_pool_index == -1) // static ip
 		{
-			if (!routed) routeset(s, session[s].ip, 0, 0, 0);
+			if (!routed && del_routes) routeset(s, session[s].ip, 0, 0, 0);
 			session[s].ip = 0;
 		}
 		else
 			free_ip_address(s);
 
 		// unroute IPv6, if setup
-		if (session[s].ppp.ipv6cp == Opened && session[s].ipv6prefixlen)
-			route6set(s, session[s].ipv6route, session[s].ipv6prefixlen, 0);
+		for (r = 0; r < MAXROUTE6 && session[s].route6[r].ipv6route.s6_addr[0] && session[s].route6[r].ipv6prefixlen; r++)
+		{
+			if (del_routes) route6set(s, session[s].route6[r].ipv6route, session[s].route6[r].ipv6prefixlen, 0);
+			memset(&session[s].route6[r], 0, sizeof(session[s].route6[r]));
+		}
+
+		if (session[s].ipv6address.s6_addr[0] && del_routes)
+		{
+			route6set(s, session[s].ipv6address, 128, 0);
+		}
+
+		if (b)
+		{
+			// This session was part of a bundle
+			bundle[b].num_of_links--;
+			LOG(3, s, session[s].tunnel, "MPPP: Dropping member link: %d from bundle %d\n",s,b);
+			if(bundle[b].num_of_links == 0)
+			{
+				bundleclear(b);
+				LOG(3, s, session[s].tunnel, "MPPP: Kill bundle: %d (No remaing member links)\n",b);
+			}
+			else 
+			{
+				// Adjust the members array to accomodate the new change
+				uint8_t mem_num = 0;
+				// It should be here num_of_links instead of num_of_links-1 (previous instruction "num_of_links--")
+				if(bundle[b].members[bundle[b].num_of_links] != s)
+				{
+					uint8_t ml;
+					for(ml = 0; ml<bundle[b].num_of_links; ml++)
+					if(bundle[b].members[ml] == s)
+					{
+							mem_num = ml;
+							break;
+					}
+					bundle[b].members[mem_num] = bundle[b].members[bundle[b].num_of_links];
+					LOG(3, s, session[s].tunnel, "MPPP: Adjusted member links array\n");
+
+					// If the killed session is the first of the bundle,
+					// the new first session must be stored in the cache_ipmap
+					// else the function sessionbyip return 0 and the sending not work any more (processipout).
+					if (mem_num == 0)
+					{
+						sessionidt new_s = bundle[b].members[0];
+
+						routed = 0;
+						// Add the route for this session.
+						for (r = 0; r < MAXROUTE && session[new_s].route[r].ip; r++)
+						{
+							int i, prefixlen;
+							in_addr_t ip;
+
+							prefixlen = session[new_s].route[r].prefixlen;
+							ip = session[new_s].route[r].ip;
+
+							if (!prefixlen) prefixlen = 32;
+							ip &= 0xffffffff << (32 - prefixlen);	// Force the ip to be the first one in the route.
+
+							for (i = ip; i < ip+(1<<(32-prefixlen)) ; ++i)
+								cache_ipmap(i, new_s);
+						}
+						cache_ipmap(session[new_s].ip, new_s);
+
+						// IPV6 route
+						for (r = 0; r < MAXROUTE6 && session[new_s].route6[r].ipv6prefixlen; r++)
+						{
+							cache_ipv6map(session[new_s].route6[r].ipv6route, session[new_s].route6[r].ipv6prefixlen, new_s);
+						}
+
+						if (session[new_s].ipv6address.s6_addr[0])
+						{
+							cache_ipv6map(session[new_s].ipv6address, 128, new_s);
+						}
+					}
+				}
+			}
+
+			cluster_send_bundle(b);
+        }
 	}
 
 	if (session[s].throttle_in || session[s].throttle_out) // Unthrottle if throttled.
 		throttle_session(s, 0, 0);
 
 	if (cdn_result)
-	{                            // Send CDN
-		controlt *c = controlnew(14); // sending CDN
-		if (cdn_error)
+	{
+		if (session[s].tunnel == TUNNEL_ID_PPPOE)
 		{
-			uint8_t buf[4];
-			*(uint16_t *) buf     = htons(cdn_result);
-			*(uint16_t *) (buf+2) = htons(cdn_error);
-			controlb(c, 1, buf, 4, 1);
+			pppoe_shutdown_session(s);
 		}
 		else
-			control16(c, 1, cdn_result, 1);
+		{
+			// Send CDN
+			controlt *c = controlnew(14); // sending CDN
+			if (cdn_error)
+			{
+				uint16_t buf[2];
+				buf[0] = htons(cdn_result);
+				buf[1] = htons(cdn_error);
+				controlb(c, 1, (uint8_t *)buf, 4, 1);
+			}
+			else
+				control16(c, 1, cdn_result, 1);
 
-		control16(c, 14, s, 1);   // assigned session (our end)
-		// Extra debug for our fight to find what is causing SAE issue
-		// 1/4/15 - Tom
-		LOG(3, s, session[s].tunnel, "CDN sent for our session %d aka remote session %d\n",s,session[s].far);
-		controladd(c, session[s].far, session[s].tunnel); // send the message
+			control16(c, 14, s, 1);   // assigned session (our end)
+		    LOG(3, s, session[s].tunnel, "CDN sent for our session %d aka remote session %d\n",s,session[s].far);
+			controladd(c, session[s].far, session[s].tunnel); // send the message
+		}
 	}
 
 	// update filter refcounts
@@ -1748,7 +2368,7 @@ void sendipcp(sessionidt s, tunnelidt t)
 		session[s].unique_id = last_id;
 	}
 
-	q = makeppp(buf, sizeof(buf), 0, 0, s, t, PPPIPCP);
+	q = makeppp(buf, sizeof(buf), 0, 0, s, t, PPPIPCP, 0, 0, 0);
 	if (!q) return;
 
 	*q = ConfigReq;
@@ -1757,7 +2377,7 @@ void sendipcp(sessionidt s, tunnelidt t)
 	q[4] = 3;				// ip address option
 	q[5] = 6;				// option length
 	*(in_addr_t *) (q + 6) = config->peer_address ? config->peer_address :
-				 config->bind_address ? config->bind_address :
+				 config->iftun_n_address[tunnel[t].indexudp] ? config->iftun_n_address[tunnel[t].indexudp] :
 				 my_address; // send my IP
 
 	tunnelsend(buf, 10 + (q - buf), t); // send it
@@ -1772,7 +2392,7 @@ void sendipv6cp(sessionidt s, tunnelidt t)
 	CSTAT(sendipv6cp);
 	LOG(3, s, t, "IPV6CP: send ConfigReq\n");
 
-	q = makeppp(buf, sizeof(buf), 0, 0, s, t, PPPIPV6CP);
+	q = makeppp(buf, sizeof(buf), 0, 0, s, t, PPPIPV6CP, 0, 0, 0);
 	if (!q) return;
 
 	*q = ConfigReq;
@@ -1804,7 +2424,6 @@ static void sessionclear(sessionidt s)
 // kill a session now
 void sessionkill(sessionidt s, char *reason, int term_cause)
 {
-
 	CSTAT(sessionkill);
 
 	if (!session[s].opened) // not alive
@@ -1812,7 +2431,7 @@ void sessionkill(sessionidt s, char *reason, int term_cause)
 
 	if (session[s].next)
 	{
-		LOG(0, s, session[s].tunnel, "Tried to kill a session with next pointer set (%d)\n", session[s].next);
+		LOG(0, s, session[s].tunnel, "Tried to kill a session with next pointer set (%u)\n", session[s].next);
 		return;
 	}
 
@@ -1829,6 +2448,16 @@ void sessionkill(sessionidt s, char *reason, int term_cause)
 	if (sess_local[s].radius)
 		radiusclear(sess_local[s].radius, s); // cant send clean accounting data, session is killed
 
+	if (session[s].forwardtosession)
+	{
+		sessionidt sess = session[s].forwardtosession;
+		if (session[sess].forwardtosession == s)
+		{
+			// Shutdown the linked session also.
+			sessionshutdown(sess, reason, CDN_ADMIN_DISC, TERM_ADMIN_RESET);
+		}
+	}
+
 	LOG(2, s, session[s].tunnel, "Kill session %d (%s): %s\n", s, session[s].user, reason);
 	sessionclear(s);
 	cluster_send_session(s);
@@ -1839,6 +2468,13 @@ static void tunnelclear(tunnelidt t)
 	if (!t) return;
 	memset(&tunnel[t], 0, sizeof(tunnel[t]));
 	tunnel[t].state = TUNNELFREE;
+}
+
+static void bundleclear(bundleidt b)
+{
+	if (!b) return;
+	memset(&bundle[b], 0, sizeof(bundle[b]));
+	bundle[b].state = BUNDLEFREE;
 }
 
 // kill a tunnel now
@@ -1877,6 +2513,7 @@ static void tunnelkill(tunnelidt t, char *reason)
 	LOG(1, 0, t, "Kill tunnel %d [%-15s]: %s\n", t, fmtaddr(htonl(tunnel[t].ip), 0), reason);
 
 	tunnelclear(t);
+	LOG(1, 0, t, "Kill tunnel %u: %s\n", t, reason);
 	cli_tunnel_actions[t].action = 0;
 	cluster_send_tunnel(t);
 }
@@ -1894,7 +2531,7 @@ static void tunnelshutdown(tunnelidt t, char *reason, int result, int error, cha
 		tunnelkill(t, reason);
 		return;
 	}
-	LOG(1, 0, t, "Shutting down tunnel %d [%-15s] (%s)\n", t, fmtaddr(htonl(tunnel[t].ip), 0), reason);
+	LOG(1, 0, t, "Shutting down tunnel %u (%s)\n", t, reason);
 
 	// close session
 	for (s = 1; s <= config->cluster_highest_sessionid ; ++s)
@@ -1910,21 +2547,21 @@ static void tunnelshutdown(tunnelidt t, char *reason, int result, int error, cha
 		controlt *c = controlnew(4);	// sending StopCCN
 		if (error)
 		{
-			uint8_t buf[64];
+			uint16_t buf[32];
 			int l = 4;
-			*(uint16_t *) buf     = htons(result);
-			*(uint16_t *) (buf+2) = htons(error);
+			buf[0] = htons(result);
+			buf[1] = htons(error);
 			if (msg)
 			{
 				int m = strlen(msg);
 				if (m + 4 > sizeof(buf))
 				    m = sizeof(buf) - 4;
 
-				memcpy(buf+4, msg, m);
+				memcpy(buf+2, msg, m);
 				l += m;
 			}
 
-			controlb(c, 1, buf, l, 1);
+			controlb(c, 1, (uint8_t *)buf, l, 1);
 		}
 		else
 			control16(c, 1, result, 1);
@@ -1935,9 +2572,10 @@ static void tunnelshutdown(tunnelidt t, char *reason, int result, int error, cha
 }
 
 // read and process packet on tunnel (UDP)
-void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
+void processudp(uint8_t *buf, int len, struct sockaddr_in *addr, uint16_t indexudpfd)
 {
-	uint8_t *chapresponse = NULL;
+	uint8_t *sendchalresponse = NULL;
+	uint8_t *recvchalresponse = NULL;
 	uint16_t l = len, t = 0, s = 0, ns = 0, nr = 0;
 	uint8_t *p = buf + 2;
 
@@ -1957,7 +2595,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 	}
 	if ((buf[1] & 0x0F) != 2)
 	{
-		LOG(1, 0, 0, "Bad L2TP ver %d\n", (buf[1] & 0x0F) != 2);
+		LOG(1, 0, 0, "Bad L2TP ver %d\n", buf[1] & 0x0F);
 		STAT(tunnel_rx_errors);
 		return;
 	}
@@ -1979,6 +2617,12 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 	if (t >= config->max_tunnels)
 	{
 		LOG(1, s, t, "Received UDP packet with invalid tunnel ID\n");
+		STAT(tunnel_rx_errors);
+		return;
+	}
+	if (t == TUNNEL_ID_PPPOE)
+	{
+		LOG(1, s, t, "Received UDP packet with tunnel ID reserved for pppoe\n");
 		STAT(tunnel_rx_errors);
 		return;
 	}
@@ -2020,7 +2664,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 
 		if (!config->cluster_iam_master)
 		{
-			master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port);
+			master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port, indexudpfd);
 			return;
 		}
 
@@ -2054,7 +2698,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 			}
 		}
 
-		LOG(3, s, t, "Control message (%d bytes): (unacked %d) l-ns %d l-nr %d r-ns %d r-nr %d\n",
+		LOG(3, s, t, "Control message (%d bytes): (unacked %d) l-ns %u l-nr %u r-ns %u r-nr %u\n",
 			l, tunnel[t].controlc, tunnel[t].ns, tunnel[t].nr, ns, nr);
 
 		// if no tunnel specified, assign one
@@ -2070,8 +2714,9 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 			tunnel[t].ip = ntohl(*(in_addr_t *) & addr->sin_addr);
 			tunnel[t].port = ntohs(addr->sin_port);
 			tunnel[t].window = 4; // default window
+			tunnel[t].indexudp = indexudpfd;
 			STAT(tunnel_created);
-			LOG(1, 0, t, "   New tunnel from %s:%u ID %d\n",
+			LOG(1, 0, t, "   New tunnel from %s:%u ID %u\n",
 				fmtaddr(htonl(tunnel[t].ip), 0), tunnel[t].port, t);
 		}
 
@@ -2085,7 +2730,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 		{
 			// is this the sequence we were expecting?
 			STAT(tunnel_rx_errors);
-			LOG(1, 0, t, "   Out of sequence tunnel %d, (%d is not the expected %d)\n",
+			LOG(1, 0, t, "   Out of sequence tunnel %u, (%u is not the expected %u)\n",
 				t, ns, tunnel[t].nr);
 
 			if (l)	// Is this not a ZLB?
@@ -2173,7 +2818,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 				b += 2;
 				if (*(uint16_t *) (b))
 				{
-					LOG(2, s, t, "Unknown AVP vendor %d\n", ntohs(*(uint16_t *) (b)));
+					LOG(2, s, t, "Unknown AVP vendor %u\n", ntohs(*(uint16_t *) (b)));
 					fatal = flags;
 					result = 2; // general error
 					error = 6; // generic vendor-specific error
@@ -2238,7 +2883,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 					n = orig_len;
 				}
 
-				LOG(4, s, t, "   AVP %d (%s) len %d%s%s\n", mtype, l2tp_avp_name(mtype), n,
+				LOG(4, s, t, "   AVP %u (%s) len %d%s%s\n", mtype, l2tp_avp_name(mtype), n,
 					flags & 0x40 ? ", hidden" : "", flags & 0x80 ? ", mandatory" : "");
 
 				switch (mtype)
@@ -2246,7 +2891,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 				case 0:     // message type
 					message = ntohs(*(uint16_t *) b);
 					mandatory = flags & 0x80;
-					LOG(4, s, t, "   Message type = %d (%s)\n", *b, l2tp_code(message));
+					LOG(4, s, t, "   Message type = %u (%s)\n", message, l2tp_code(message));
 					break;
 				case 1:     // result code
 					{
@@ -2269,12 +2914,12 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 								cause = TERM_ADMIN_RESET;
 						}
 
-						LOG(4, s, t, "   Result Code %d: %s\n", rescode, resdesc);
+						LOG(4, s, t, "   Result Code %u: %s\n", rescode, resdesc);
 						if (n >= 4)
 						{
 							uint16_t errcode = ntohs(*(uint16_t *)(b + 2));
 							errdesc = l2tp_error_code(errcode);
-							LOG(4, s, t, "   Error Code %d: %s\n", errcode, errdesc);
+							LOG(4, s, t, "   Error Code %u: %s\n", errcode, errdesc);
 						}
 						if (n > 4)
 							LOG(4, s, t, "   Error String: %.*s\n", n-4, b+4);
@@ -2292,7 +2937,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 				case 2:     // protocol version
 					{
 						version = ntohs(*(uint16_t *) (b));
-						LOG(4, s, t, "   Protocol version = %d\n", version);
+						LOG(4, s, t, "   Protocol version = %u\n", version);
 						if (version && version != 0x0100)
 						{   // allow 0.0 and 1.0
 							LOG(1, s, t, "   Bad protocol version %04X\n", version);
@@ -2326,38 +2971,48 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 					break;
 				case 9:     // assigned tunnel
 					tunnel[t].far = ntohs(*(uint16_t *) (b));
-					LOG(4, s, t, "   Remote tunnel id = %d\n", tunnel[t].far);
+					LOG(4, s, t, "   Remote tunnel id = %u\n", tunnel[t].far);
 					break;
 				case 10:    // rx window
 					tunnel[t].window = ntohs(*(uint16_t *) (b));
 					if (!tunnel[t].window)
 						tunnel[t].window = 1; // window of 0 is silly
-					LOG(4, s, t, "   rx window = %d\n", tunnel[t].window);
+					LOG(4, s, t, "   rx window = %u\n", tunnel[t].window);
 					break;
-				case 11:	// Challenge
+				case 11:	// Request Challenge
 					{
 						LOG(4, s, t, "   LAC requested CHAP authentication for tunnel\n");
-						build_chap_response(b, 2, n, &chapresponse);
+						if (message == 1)
+							build_chap_response(b, 2, n, &sendchalresponse);
+						else if (message == 2)
+							build_chap_response(b, 3, n, &sendchalresponse);
 					}
 					break;
-				case 13:    // Response
+				case 13:    // receive challenge Response
+					if (tunnel[t].isremotelns)
+					{
+						recvchalresponse = calloc(17, 1);
+						memcpy(recvchalresponse, b, (n < 17) ? n : 16);
+						LOG(3, s, t, "received challenge response from REMOTE LNS\n");
+					}
+					else
 					// Why did they send a response? We never challenge.
 					LOG(2, s, t, "   received unexpected challenge response\n");
 					break;
 
 				case 14:    // assigned session
 					asession = session[s].far = ntohs(*(uint16_t *) (b));
-					LOG(4, s, t, "   assigned session = %d\n", asession);
+					LOG(4, s, t, "   assigned session = %u\n", asession);
 					break;
 				case 15:    // call serial number
-					LOG(4, s, t, "   call serial number = %d\n", ntohl(*(uint32_t *)b));
+					LOG(4, s, t, "   call serial number = %u\n", ntohl(*(uint32_t *)b));
 					break;
 				case 18:    // bearer type
-					LOG(4, s, t, "   bearer type = %d\n", ntohl(*(uint32_t *)b));
+					LOG(4, s, t, "   bearer type = %u\n", ntohl(*(uint32_t *)b));
 					// TBA - for RADIUS
 					break;
 				case 19:    // framing type
-					LOG(4, s, t, "   framing type = %d\n", ntohl(*(uint32_t *)b));
+					LOG(4, s, t, "   framing type = %u\n", ntohl(*(uint32_t *)b));
 					// TBA
 					break;
 				case 21:    // called number
@@ -2411,7 +3066,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 				case 29:    // Proxy Authentication Type
 					{
 						uint16_t atype = ntohs(*(uint16_t *)b);
-						LOG(4, s, t, "   Proxy Auth Type %d (%s)\n", atype, ppp_auth_type(atype));
+						LOG(4, s, t, "   Proxy Auth Type %u (%s)\n", atype, ppp_auth_type(atype));
 						break;
 					}
 				case 30:    // Proxy Authentication Name
@@ -2431,7 +3086,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 				case 32:    // Proxy Authentication ID
 					{
 						uint16_t authid = ntohs(*(uint16_t *)(b));
-						LOG(4, s, t, "   Proxy Auth ID (%d)\n", authid);
+						LOG(4, s, t, "   Proxy Auth ID (%u)\n", authid);
 						break;
 					}
 				case 33:    // Proxy Authentication Response
@@ -2549,7 +3204,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 				default:
 					{
 						static char e[] = "unknown AVP 0xXXXX";
-						LOG(2, s, t, "   Unknown AVP type %d\n", mtype);
+						LOG(2, s, t, "   Unknown AVP type %u\n", mtype);
 						fatal = flags;
 						result = 2; // general error
 						error = 8; // unknown mandatory AVP
@@ -2566,13 +3221,15 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 				{
 				case 1:       // SCCRQ - Start Control Connection Request
 					tunnel[t].state = TUNNELOPENING;
+					LOG(3, s, t, "Received SCCRQ\n");
 					if (main_quit != QUIT_SHUTDOWN)
 					{
+						LOG(3, s, t, "sending SCCRP\n");
 						controlt *c = controlnew(2); // sending SCCRP
 						control16(c, 2, version, 1); // protocol version
 						control32(c, 3, 3, 1); // framing
-						controls(c, 7, hostname, 1); // host name
-						if (chapresponse) controlb(c, 13, chapresponse, 16, 1); // Challenge response
+						controls(c, 7, config->multi_n_hostname[tunnel[t].indexudp][0]?config->multi_n_hostname[tunnel[t].indexudp]:hostname, 1); // host name
+						if (sendchalresponse) controlb(c, 13, sendchalresponse, 16, 1); // Send Challenge response
 						control16(c, 9, t, 1); // assigned tunnel
 						controladd(c, 0, t); // send the resply
 					}
@@ -2583,32 +3240,71 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 					break;
 				case 2:       // SCCRP
 					tunnel[t].state = TUNNELOPEN;
+					tunnel[t].lastrec = time_now;
+					LOG(3, s, t, "Received SCCRP\n");
+					if (main_quit != QUIT_SHUTDOWN)
+					{
+						if (tunnel[t].isremotelns && recvchalresponse)
+						{
+							hasht hash;
+
+							lac_calc_rlns_auth(t, 2, hash); // id = 2 (SCCRP)
+							// check authenticator
+							if (memcmp(hash, recvchalresponse, 16) == 0)
+							{
+								LOG(3, s, t, "sending SCCCN to REMOTE LNS\n");
+								controlt *c = controlnew(3); // sending SCCCN
+								controls(c, 7, config->multi_n_hostname[tunnel[t].indexudp][0]?config->multi_n_hostname[tunnel[t].indexudp]:hostname, 1); // host name
+								controls(c, 8, Vendor_name, 1); // Vendor name
+								control16(c, 2, version, 1); // protocol version
+								control32(c, 3, 3, 1); // framing Capabilities
+								if (sendchalresponse) controlb(c, 13, sendchalresponse, 16, 1); // Challenge response
+								control16(c, 9, t, 1); // assigned tunnel
+								controladd(c, 0, t); // send
+							}
+							else
+							{
+								tunnelshutdown(t, "Bad chap response from REMOTE LNS", 4, 0, 0);
+							}
+						}
+					}
+					else
+					{
+						tunnelshutdown(t, "Shutting down", 6, 0, 0);
+					}
 					break;
 				case 3:       // SCCN
+					LOG(3, s, t, "Received SCCN\n");
 					tunnel[t].state = TUNNELOPEN;
+					tunnel[t].lastrec = time_now;
 					controlnull(t); // ack
 					break;
 				case 4:       // StopCCN
+					LOG(3, s, t, "Received StopCCN\n");
 					controlnull(t); // ack
 					tunnelshutdown(t, "Stopped", 0, 0, 0); // Shut down cleanly
 					break;
 				case 6:       // HELLO
+					LOG(3, s, t, "Received HELLO\n");
 					controlnull(t); // simply ACK
 					break;
 				case 7:       // OCRQ
 					// TBA
+					LOG(3, s, t, "Received OCRQ\n");
 					break;
 				case 8:       // OCRO
 					// TBA
+					LOG(3, s, t, "Received OCRO\n");
 					break;
 				case 9:       // OCCN
 					// TBA
+					LOG(3, s, t, "Received OCCN\n");
 					break;
 				case 10:      // ICRQ
+					LOG(3, s, t, "Received ICRQ\n");
 					if (sessionfree && main_quit != QUIT_SHUTDOWN)
 					{
 						controlt *c = controlnew(11); // ICRP
-
 						/* check for existing session with this id */
 						for (s = 1; s <= config->cluster_highest_sessionid ; ++s)
 						{
@@ -2636,8 +3332,8 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 						session[s].opened = time_now;
 						session[s].tunnel = t;
 						session[s].far = asession;
-						session[s].last_packet = time_now;
-						LOG(3, s, t, "New session (%d/%d)\n", tunnel[t].far, session[s].far);
+						session[s].last_packet = session[s].last_data = time_now;
+						LOG(3, s, t, "New session (%u/%u)\n", tunnel[t].far, session[s].far);
 						control16(c, 14, s, 1); // assigned session
 						controladd(c, asession, t); // send the reply
 
@@ -2653,6 +3349,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 
 					{
 						controlt *c = controlnew(14); // CDN
+						LOG(3, s, t, "Sending CDN\n");
 						if (!sessionfree)
 						{
 							STAT(session_overflow);
@@ -2666,9 +3363,24 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 					}
 					return;
 				case 11:      // ICRP
-					// TBA
+				LOG(3, s, t, "Received ICRP\n");
+				if (session[s].forwardtosession)
+				{
+					controlt *c = controlnew(12); // ICCN
+
+					session[s].opened = time_now;
+					session[s].tunnel = t;
+					session[s].far = asession;
+					session[s].last_packet = session[s].last_data = time_now;
+
+					control32(c, 19, 1, 1); // Framing Type
+					control32(c, 24, 10000000, 1); // Tx Connect Speed
+					controladd(c, asession, t); // send the message
+					LOG(3, s, t, "Sending ICCN\n");
+				}
 					break;
 				case 12:      // ICCN
+					LOG(3, s, t, "Received ICCN\n");
 					if (amagic == 0) amagic = time_now;
 					session[s].magic = amagic; // set magic number
 					session[s].flags = aflags; // set flags received
@@ -2686,11 +3398,17 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 					// start LCP
 					sess_local[s].lcp_authtype = config->radius_authprefer;
 					sess_local[s].ppp_mru = MRU;
+
+					// Set multilink options before sending initial LCP packet
+					sess_local[s].mp_mrru = 1614;
+					sess_local[s].mp_epdis = ntohl(config->iftun_address ? config->iftun_address : my_address);
+
 					sendlcp(s, t);
 					change_state(s, lcp, RequestSent);
 					break;
 
 				case 14:      // CDN
+					LOG(3, s, t, "Received CDN\n");
 					controlnull(t); // ack
 					sessionshutdown(s, disc_reason, CDN_NONE, disc_cause);
 					break;
@@ -2702,10 +3420,11 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 					if (mandatory)
 						tunnelshutdown(t, "Unknown message type", 2, 6, "unknown message type");
 					else
-						LOG(1, s, t, "Unknown message type %d\n", message);
+						LOG(1, s, t, "Unknown message type %u\n", message);
 					break;
 				}
-			if (chapresponse) free(chapresponse);
+			if (sendchalresponse) free(sendchalresponse);
+			if (recvchalresponse) free(recvchalresponse);
 			cluster_send_tunnel(t);
 		}
 		else
@@ -2741,15 +3460,34 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 			l -= 2;
 		}
 
+		if (session[s].forwardtosession)
+		{
+			LOG(5, s, t, "Forwarding data session to session %u\n", session[s].forwardtosession);
+			// Forward to LAC/BAS or Remote LNS session
+			lac_session_forward(buf, len, s, proto, addr->sin_addr.s_addr, addr->sin_port, indexudpfd);
+			return;
+		}
+		else if (config->auth_tunnel_change_addr_src)
+		{
+			if (tunnel[t].ip != ntohl(addr->sin_addr.s_addr) &&
+				tunnel[t].port == ntohs(addr->sin_port))
+			{
+				// The remotes BAS are a clustered l2tpns server and the source IP has changed
+				LOG(5, s, t, "The tunnel IP source (%s) has changed by new IP (%s)\n",
+					fmtaddr(htonl(tunnel[t].ip), 0), fmtaddr(addr->sin_addr.s_addr, 0));
+
+				tunnel[t].ip = ntohl(addr->sin_addr.s_addr);
+			}
+		}
+
 		if (s && !session[s].opened)	// Is something wrong??
 		{
 			if (!config->cluster_iam_master)
 			{
 				// Pass it off to the master to deal with..
-				master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port);
+				master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port, indexudpfd);
 				return;
 			}
-
 
 			LOG(1, s, t, "UDP packet contains session which is not opened.  Dropping packet.\n");
 			STAT(tunnel_rx_errors);
@@ -2759,69 +3497,101 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 		if (proto == PPPPAP)
 		{
 			session[s].last_packet = time_now;
-			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port); return; }
+			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port, indexudpfd); return; }
 			processpap(s, t, p, l);
 		}
 		else if (proto == PPPCHAP)
 		{
 			session[s].last_packet = time_now;
-			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port); return; }
+			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port, indexudpfd); return; }
 			processchap(s, t, p, l);
 		}
 		else if (proto == PPPLCP)
 		{
 			session[s].last_packet = time_now;
-			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port); return; }
+			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port, indexudpfd); return; }
 			processlcp(s, t, p, l);
 		}
 		else if (proto == PPPIPCP)
 		{
 			session[s].last_packet = time_now;
-			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port); return; }
+			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port, indexudpfd); return; }
 			processipcp(s, t, p, l);
 		}
 		else if (proto == PPPIPV6CP && config->ipv6_prefix.s6_addr[0])
 		{
 			session[s].last_packet = time_now;
-			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port); return; }
+			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port, indexudpfd); return; }
 			processipv6cp(s, t, p, l);
 		}
 		else if (proto == PPPCCP)
 		{
 			session[s].last_packet = time_now;
-			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port); return; }
+			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port, indexudpfd); return; }
 			processccp(s, t, p, l);
 		}
 		else if (proto == PPPIP)
 		{
 			if (session[s].die)
 			{
-				LOG(4, s, t, "Session %d is closing.  Don't process PPP packets\n", s);
+				LOG(4, s, t, "Session %u is closing.  Don't process PPP packets\n", s);
 				return;              // closing session, PPP not processed
 			}
 
-			session[s].last_packet = time_now;
+			session[s].last_packet = session[s].last_data = time_now;
 			if (session[s].walled_garden && !config->cluster_iam_master)
 			{
-				master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port);
+				master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port, indexudpfd);
 				return;
 			}
 
 			processipin(s, t, p, l);
 		}
+		else if (proto == PPPMP)
+		{
+			if (session[s].die)
+			{
+				LOG(4, s, t, "Session %u is closing.  Don't process PPP packets\n", s);
+				return;              // closing session, PPP not processed
+			}
+
+			session[s].last_packet = session[s].last_data = time_now;
+			if (!config->cluster_iam_master)
+			{
+				// The fragments reconstruction is managed by the Master.
+				master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port, indexudpfd);
+				return;
+			}
+
+			processmpin(s, t, p, l);
+		}
 		else if (proto == PPPIPV6 && config->ipv6_prefix.s6_addr[0])
 		{
 			if (session[s].die)
 			{
-				LOG(4, s, t, "Session %d is closing.  Don't process PPP packets\n", s);
+				LOG(4, s, t, "Session %u is closing.  Don't process PPP packets\n", s);
 				return;              // closing session, PPP not processed
 			}
 
-			session[s].last_packet = time_now;
+			session[s].last_packet = session[s].last_data = time_now;
 			if (session[s].walled_garden && !config->cluster_iam_master)
 			{
-				master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port);
+				master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port, indexudpfd);
 				return;
+			}
+
+			if (!config->cluster_iam_master)
+			{
+				// Check if DhcpV6, IP dst: FF02::1:2, Src Port 0x0222 (546), Dst Port 0x0223 (547)
+				if (*(p + 6) == 17 && *(p + 24) == 0xFF && *(p + 25) == 2 &&
+						*(uint32_t *)(p + 26) == 0 && *(uint32_t *)(p + 30) == 0 &&
+						*(uint16_t *)(p + 34) == 0 && *(p + 36) == 0 && *(p + 37) == 1 && *(p + 38) == 0 && *(p + 39) == 2 &&
+						*(p + 40) == 2 && *(p + 41) == 0x22 && *(p + 42) == 2 && *(p + 43) == 0x23)
+				{
+					// DHCPV6 must be managed by the Master.
+					master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port, indexudpfd);
+					return;
+				}
 			}
 
 			processipv6in(s, t, p, l);
@@ -2829,7 +3599,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 		else if (session[s].ppp.lcp == Opened)
 		{
 			session[s].last_packet = time_now;
-			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port); return; }
+			if (!config->cluster_iam_master) { master_forward_packet(buf, len, addr->sin_addr.s_addr, addr->sin_port, indexudpfd); return; }
 			protoreject(s, t, p, l, proto);
 		}
 		else
@@ -2841,6 +3611,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr)
 }
 
 // read and process packet on tun
+// (i.e. this routine writes to buf[-8]).
 static void processtun(uint8_t * buf, int len)
 {
 	LOG_HEX(5, "Receive TUN Data", buf, len);
@@ -2916,6 +3687,9 @@ static void regular_cleanups(double period)
 		if (t > config->cluster_highest_tunnelid)
 			t = 1;
 
+		if (t == TUNNEL_ID_PPPOE)
+			continue;
+
 		// check for expired tunnels
 		if (tunnel[t].die && tunnel[t].die <= TIME)
 		{
@@ -2948,10 +3722,13 @@ static void regular_cleanups(double period)
 		// Send hello
 		if (tunnel[t].state == TUNNELOPEN && !tunnel[t].controlc && (time_now - tunnel[t].lastrec) > 60)
 		{
-			controlt *c = controlnew(6); // sending HELLO
-			controladd(c, 0, t); // send the message
-			LOG(3, 0, t, "Sending HELLO message\n");
-			t_actions++;
+			if (!config->disable_sending_hello)
+			{
+				controlt *c = controlnew(6); // sending HELLO
+				controladd(c, 0, t); // send the message
+				LOG(3, 0, t, "Sending HELLO message\n");
+				t_actions++;
+			}
 		}
 
 		// Check for tunnel changes requested from the CLI
@@ -3114,8 +3891,8 @@ static void regular_cleanups(double period)
 			}
 		}
 
-		// Drop sessions who have not responded within IDLE_TIMEOUT seconds
-		if (session[s].last_packet && (time_now - session[s].last_packet >= config->lcp_idle_timeout))
+		// Drop sessions who have not responded within IDLE_ECHO_TIMEOUT seconds
+		if (session[s].last_packet && (time_now - session[s].last_packet >= config->idle_echo_timeout))
 		{
 			sessionshutdown(s, "No response to LCP ECHO requests.", CDN_ADMIN_DISC, TERM_LOST_SERVICE);
 			STAT(session_timeout);
@@ -3124,12 +3901,14 @@ static void regular_cleanups(double period)
 		}
 
 		// No data in ECHO_TIMEOUT seconds, send LCP ECHO
-		if (session[s].ppp.phase >= Establish && (time_now - session[s].last_packet >= config->lcp_echo_timeout) &&
-			(time_now - sess_local[s].last_echo >= config->lcp_echo_timeout))
+		if (session[s].ppp.phase >= Establish &&
+                    ((!config->ppp_keepalive) ||
+                     (time_now - session[s].last_packet >= config->echo_timeout)) &&
+		    (time_now - sess_local[s].last_echo >= ECHO_TIMEOUT))
 		{
 			uint8_t b[MAXETHER];
 
-			uint8_t *q = makeppp(b, sizeof(b), 0, 0, s, session[s].tunnel, PPPLCP);
+			uint8_t *q = makeppp(b, sizeof(b), 0, 0, s, session[s].tunnel, PPPLCP, 1, 0, 0);
 			if (!q) continue;
 
 			*q = EchoReq;
@@ -3139,9 +3918,49 @@ static void regular_cleanups(double period)
 
 			LOG(4, s, session[s].tunnel, "No data in %d seconds, sending LCP ECHO\n",
 					(int)(time_now - session[s].last_packet));
-			tunnelsend(b, 24, session[s].tunnel); // send it
+
+			tunnelsend(b, (q - b) + 8, session[s].tunnel); // send it
 			sess_local[s].last_echo = time_now;
 			s_actions++;
+		}
+
+		// Drop sessions who have reached session_timeout seconds
+		if (session[s].session_timeout)
+		{
+			bundleidt bid = session[s].bundle;
+			if (bid)
+			{
+				if (time_now - bundle[bid].last_check >= 1)
+				{
+					bundle[bid].online_time += (time_now - bundle[bid].last_check) * bundle[bid].num_of_links;
+					bundle[bid].last_check = time_now;
+					if (bundle[bid].online_time >= session[s].session_timeout)
+					{
+						int ses;
+						for (ses = bundle[bid].num_of_links - 1; ses >= 0; ses--)
+						{
+							sessionshutdown(bundle[bid].members[ses], "Session timeout", CDN_ADMIN_DISC, TERM_SESSION_TIMEOUT);
+							s_actions++;
+							continue;
+						}
+					}
+				}
+			}
+			else if (time_now - session[s].opened >= session[s].session_timeout)
+			{
+				sessionshutdown(s, "Session timeout", CDN_ADMIN_DISC, TERM_SESSION_TIMEOUT);
+				s_actions++;
+				continue;
+			}
+		}
+
+		// Drop sessions who have reached idle_timeout seconds
+		if (session[s].last_data && session[s].idle_timeout && (time_now - session[s].last_data >= session[s].idle_timeout))
+		{
+			sessionshutdown(s, "Idle Timeout Reached", CDN_ADMIN_DISC, TERM_IDLE_TIMEOUT);
+			STAT(session_timeout);
+			s_actions++;
+			continue;
 		}
 
 		// Check for actions requested from the CLI
@@ -3168,7 +3987,7 @@ static void regular_cleanups(double period)
 			}
 			else if (a & CLI_SESS_SNOOP)
 			{
-				LOG(2, s, session[s].tunnel, "Snooping session by CLI (to %s:%d)\n",
+				LOG(2, s, session[s].tunnel, "Snooping session by CLI (to %s:%u)\n",
 				    fmtaddr(cli_session_actions[s].snoop_ip, 0),
 				    cli_session_actions[s].snoop_port);
 
@@ -3222,7 +4041,8 @@ static void regular_cleanups(double period)
 		if (config->radius_accounting && config->radius_interim > 0
 		    && session[s].ip && !session[s].walled_garden
 		    && !sess_local[s].radius // RADIUS already in progress
-		    && time_now - sess_local[s].last_interim >= config->radius_interim)
+		    && time_now - sess_local[s].last_interim >= config->radius_interim
+		    && session[s].flags & SESSION_STARTED)
 		{
 		    	int rad = radiusnew(s);
 			if (!rad)
@@ -3255,35 +4075,36 @@ static int still_busy(void)
 	static clockt last_talked = 0;
 	static clockt start_busy_wait = 0;
 
-	if (!config->cluster_iam_master)
-	{
 #ifdef BGP
-		static time_t stopped_bgp = 0;
-	    	if (bgp_configured)
+	static time_t stopped_bgp = 0;
+	if (bgp_configured)
+	{
+		if (!stopped_bgp)
 		{
-			if (!stopped_bgp)
+			LOG(1, 0, 0, "Shutting down in %d seconds, stopping BGP...\n", QUIT_DELAY);
+
+			for (i = 0; i < BGP_NUM_PEERS; i++)
+				if (bgp_peers[i].state == Established)
+					bgp_stop(&bgp_peers[i]);
+
+			stopped_bgp = time_now;
+
+			if (!config->cluster_iam_master)
 			{
-			    	LOG(1, 0, 0, "Shutting down in %d seconds, stopping BGP...\n", QUIT_DELAY);
-
-				for (i = 0; i < BGP_NUM_PEERS; i++)
-					if (bgp_peers[i].state == Established)
-						bgp_stop(&bgp_peers[i]);
-
-				stopped_bgp = time_now;
-
 				// we don't want to become master
 				cluster_send_ping(0);
 
 				return 1;
 			}
-
-			if (time_now < (stopped_bgp + QUIT_DELAY))
-				return 1;
 		}
+
+		if (!config->cluster_iam_master && time_now < (stopped_bgp + QUIT_DELAY))
+			return 1;
+	}
 #endif /* BGP */
 
+	if (!config->cluster_iam_master)
 		return 0;
-	}
 
 	if (main_quit == QUIT_SHUTDOWN)
 	{
@@ -3311,7 +4132,7 @@ static int still_busy(void)
 
 		if (last_talked != TIME)
 		{
-			LOG(2, 0, 0, "Tunnel %d still has un-acked control messages.\n", i);
+			LOG(2, 0, 0, "Tunnel %u still has un-acked control messages.\n", i);
 			last_talked = TIME;
 		}
 		return 1;
@@ -3333,7 +4154,7 @@ static int still_busy(void)
 
 		if (last_talked != TIME)
 		{
-			LOG(2, 0, 0, "Radius session %d is still busy (sid %d)\n", i, radius[i].session);
+			LOG(2, 0, 0, "Radius session %u is still busy (sid %u)\n", i, radius[i].session);
 			last_talked = TIME;
 		}
 		return 1;
@@ -3349,8 +4170,8 @@ static int still_busy(void)
 # include "fake_epoll.h"
 #endif
 
-// the base set of fds polled: cli, cluster, tun, udp, control, dae
-#define BASE_FDS	6
+// the base set of fds polled: cli, cluster, tun, udp (MAX_UDPFD), control, dae, netlink, udplac, pppoedisc, pppoesess
+#define BASE_FDS	(9 + MAX_UDPFD)
 
 // additional polled fds
 #ifdef BGP
@@ -3362,8 +4183,11 @@ static int still_busy(void)
 // main loop - gets packets on tun or udp and processes them
 static void mainloop(void)
 {
-	int i;
+	int i, j;
 	uint8_t buf[65536];
+	uint8_t *p = buf + 32; // for the hearder of the forwarded MPPP packet (see C_MPPP_FORWARD)
+						// and the forwarded pppoe session
+	int size_bufp = sizeof(buf) - 32;
 	clockt next_cluster_ping = 0;	// send initial ping immediately
 	struct epoll_event events[BASE_FDS + RADIUS_FDS + EXTRA_FDS];
 	int maxevent = sizeof(events)/sizeof(*events);
@@ -3374,8 +4198,8 @@ static void mainloop(void)
 		exit(1);
 	}
 
-	LOG(4, 0, 0, "Beginning of main loop.  clifd=%d, cluster_sockfd=%d, tunfd=%d, udpfd=%d, controlfd=%d, daefd=%d\n",
-		clifd, cluster_sockfd, tunfd, udpfd, controlfd, daefd);
+	LOG(4, 0, 0, "Beginning of main loop.  clifd=%d, cluster_sockfd=%d, tunfd=%d, udpfd=%d, controlfd=%d, daefd=%d, nlfd=%d , udplacfd=%d, pppoefd=%d, pppoesessfd=%d\n",
+		clifd, cluster_sockfd, tunfd, udpfd[0], controlfd, daefd, nlfd, udplacfd, pppoediscfd, pppoesessfd);
 
 	/* setup our fds to poll for input */
 	{
@@ -3385,9 +4209,12 @@ static void mainloop(void)
 		e.events = EPOLLIN;
 		i = 0;
 
-		d[i].type = FD_TYPE_CLI;
-		e.data.ptr = &d[i++];
-		epoll_ctl(epollfd, EPOLL_CTL_ADD, clifd, &e);
+		if (clifd >= 0)
+		{
+			d[i].type = FD_TYPE_CLI;
+			e.data.ptr = &d[i++];
+			epoll_ctl(epollfd, EPOLL_CTL_ADD, clifd, &e);
+		}
 
 		d[i].type = FD_TYPE_CLUSTER;
 		e.data.ptr = &d[i++];
@@ -3397,10 +4224,6 @@ static void mainloop(void)
 		e.data.ptr = &d[i++];
 		epoll_ctl(epollfd, EPOLL_CTL_ADD, tunfd, &e);
 
-		d[i].type = FD_TYPE_UDP;
-		e.data.ptr = &d[i++];
-		epoll_ctl(epollfd, EPOLL_CTL_ADD, udpfd, &e);
-
 		d[i].type = FD_TYPE_CONTROL;
 		e.data.ptr = &d[i++];
 		epoll_ctl(epollfd, EPOLL_CTL_ADD, controlfd, &e);
@@ -3408,6 +4231,26 @@ static void mainloop(void)
 		d[i].type = FD_TYPE_DAE;
 		e.data.ptr = &d[i++];
 		epoll_ctl(epollfd, EPOLL_CTL_ADD, daefd, &e);
+
+		d[i].type = FD_TYPE_NETLINK;
+		e.data.ptr = &d[i++];
+		epoll_ctl(epollfd, EPOLL_CTL_ADD, nlfd, &e);
+
+		d[i].type = FD_TYPE_PPPOEDISC;
+		e.data.ptr = &d[i++];
+		epoll_ctl(epollfd, EPOLL_CTL_ADD, pppoediscfd, &e);
+
+		d[i].type = FD_TYPE_PPPOESESS;
+		e.data.ptr = &d[i++];
+		epoll_ctl(epollfd, EPOLL_CTL_ADD, pppoesessfd, &e);
+
+		for (j = 0; j < config->nbudpfd; j++)
+		{
+			d[i].type = FD_TYPE_UDP;
+			d[i].index = j;
+			e.data.ptr = &d[i++];
+			epoll_ctl(epollfd, EPOLL_CTL_ADD, udpfd[j], &e);
+		}
 	}
 
 #ifdef BGP
@@ -3421,7 +4264,8 @@ static void mainloop(void)
 		if (config->neighbour[i].name[0])
 			bgp_start(&bgp_peers[i], config->neighbour[i].name,
 				config->neighbour[i].as, config->neighbour[i].keepalive,
-				config->neighbour[i].hold, 0); /* 0 = routing disabled */
+				config->neighbour[i].hold, config->neighbour[i].update_source,
+				0); /* 0 = routing disabled */
 	}
 #endif /* BGP */
 
@@ -3468,10 +4312,12 @@ static void mainloop(void)
 			struct in_addr local;
 			socklen_t alen;
 			int c, s;
-			int udp_ready = 0;
+			int udp_ready[MAX_UDPFD + 1] = INIT_TABUDPVAR;
+			int pppoesess_ready = 0;
+			int pppoesess_pkts = 0;
 			int tun_ready = 0;
 			int cluster_ready = 0;
-			int udp_pkts = 0;
+			int udp_pkts[MAX_UDPFD + 1] = INIT_TABUDPVAR;
 			int tun_pkts = 0;
 			int cluster_pkts = 0;
 #ifdef BGP
@@ -3505,30 +4351,37 @@ static void mainloop(void)
 				// these are handled below, with multiple interleaved reads
 				case FD_TYPE_CLUSTER:	cluster_ready++; break;
 				case FD_TYPE_TUN:	tun_ready++; break;
-				case FD_TYPE_UDP:	udp_ready++; break;
+				case FD_TYPE_UDP:	udp_ready[d->index]++; break;
+				case FD_TYPE_PPPOESESS:	pppoesess_ready++; break;
+
+				case FD_TYPE_PPPOEDISC: // pppoe discovery
+					s = read(pppoediscfd, p, size_bufp);
+					if (s > 0) process_pppoe_disc(p, s);
+					n--;
+					break;
 
 				case FD_TYPE_CONTROL: // nsctl commands
 					alen = sizeof(addr);
-					s = recvfromto(controlfd, buf, sizeof(buf), MSG_WAITALL, (struct sockaddr *) &addr, &alen, &local);
-					if (s > 0) processcontrol(buf, s, &addr, alen, &local);
+					s = recvfromto(controlfd, p, size_bufp, MSG_WAITALL, (struct sockaddr *) &addr, &alen, &local);
+					if (s > 0) processcontrol(p, s, &addr, alen, &local);
 					n--;
 					break;
 
 				case FD_TYPE_DAE: // DAE requests
 					alen = sizeof(addr);
-					s = recvfromto(daefd, buf, sizeof(buf), MSG_WAITALL, (struct sockaddr *) &addr, &alen, &local);
-					if (s > 0) processdae(buf, s, &addr, alen, &local);
+					s = recvfromto(daefd, p, size_bufp, MSG_WAITALL, (struct sockaddr *) &addr, &alen, &local);
+					if (s > 0) processdae(p, s, &addr, alen, &local);
 					n--;
 					break;
 
 				case FD_TYPE_RADIUS: // RADIUS response
 					alen = sizeof(addr);
-					s = recvfrom(radfds[d->index], buf, sizeof(buf), MSG_WAITALL, (struct sockaddr *) &addr, &alen);
+					s = recvfrom(radfds[d->index], p, size_bufp, MSG_WAITALL, (struct sockaddr *) &addr, &alen);
 					if (s >= 0 && config->cluster_iam_master)
 					{
 						if (addr.sin_addr.s_addr == config->radiusserver[0] ||
 						    addr.sin_addr.s_addr == config->radiusserver[1])
-							processrad(buf, s, d->index);
+							processrad(p, s, d->index);
 						else
 							LOG(3, 0, 0, "Dropping RADIUS packet from unknown source %s\n",
 								fmtaddr(addr.sin_addr.s_addr, 0));
@@ -3539,13 +4392,38 @@ static void mainloop(void)
 
 #ifdef BGP
 				case FD_TYPE_BGP:
-				    	bgp_events[d->index] = events[i].events;
-				    	n--;
+					bgp_events[d->index] = events[i].events;
+					n--;
 					break;
 #endif /* BGP */
 
+				case FD_TYPE_NETLINK:
+				{
+					struct nlmsghdr *nh = (struct nlmsghdr *)p;
+					s = netlink_recv(p, size_bufp);
+					if (nh->nlmsg_type == NLMSG_ERROR)
+					{
+						struct nlmsgerr *errmsg = NLMSG_DATA(nh);
+						if (errmsg->error)
+						{
+							if (errmsg->msg.nlmsg_seq < min_initok_nlseqnum)
+							{
+								LOG(0, 0, 0, "Got a fatal netlink error (while %s): %s\n", tun_nl_phase_msg[nh->nlmsg_seq], strerror(-errmsg->error));
+								exit(1);
+							}
+							else
+								LOG(0, 0, 0, "Got a netlink error: %s\n", strerror(-errmsg->error));
+						}
+						// else it's a ack
+					}
+					else
+						LOG(1, 0, 0, "Got a unknown netlink message: type %d seq %d flags %d\n", nh->nlmsg_type, nh->nlmsg_seq, nh->nlmsg_flags);
+					n--;
+					break;
+				}
+
 				default:
-				    	LOG(0, 0, 0, "Unexpected fd type returned from epoll_wait: %d\n", d->type);
+					LOG(0, 0, 0, "Unexpected fd type returned from epoll_wait: %d\n", d->type);
 				}
 			}
 
@@ -3555,29 +4433,32 @@ static void mainloop(void)
 
 			for (c = 0; n && c < config->multi_read_count; c++)
 			{
-				// L2TP
-				if (udp_ready)
+				for (j = 0; j < config->nbudpfd; j++)
 				{
-					alen = sizeof(addr);
-					if ((s = recvfrom(udpfd, buf, sizeof(buf), 0, (void *) &addr, &alen)) > 0)
+					// L2TP and L2TP REMOTE LNS
+					if (udp_ready[j])
 					{
-						processudp(buf, s, &addr);
-						udp_pkts++;
-					}
-					else
-					{
-						udp_ready = 0;
-						n--;
+						alen = sizeof(addr);
+						if ((s = recvfrom(udpfd[j], p, size_bufp, 0, (void *) &addr, &alen)) > 0)
+						{
+							processudp(p, s, &addr, j);
+							udp_pkts[j]++;
+						}
+						else
+						{
+							udp_ready[j] = 0;
+							n--;
+						}
 					}
 				}
 
 				// incoming IP
 				if (tun_ready)
 				{
-					if ((s = read(tunfd, buf, sizeof(buf))) > 0)
+					if ((s = read(tunfd, p, size_bufp)) > 0)
 					{
-						processtun(buf, s);
-					    	tun_pkts++;
+						processtun(p, s);
+						tun_pkts++;
 					}
 					else
 					{
@@ -3586,13 +4467,28 @@ static void mainloop(void)
 					}
 				}
 
+				// pppoe session
+				if (pppoesess_ready)
+				{
+					if ((s = read(pppoesessfd, p, size_bufp)) > 0)
+					{
+						process_pppoe_sess(p, s);
+						pppoesess_pkts++;
+					}
+					else
+					{
+						pppoesess_ready = 0;
+						n--;
+					}
+				}
+
 				// cluster
 				if (cluster_ready)
 				{
 					alen = sizeof(addr);
-					if ((s = recvfrom(cluster_sockfd, buf, sizeof(buf), MSG_WAITALL, (void *) &addr, &alen)) > 0)
+					if ((s = recvfrom(cluster_sockfd, p, size_bufp, MSG_WAITALL, (void *) &addr, &alen)) > 0)
 					{
-						processcluster(buf, s, addr.sin_addr.s_addr);
+						processcluster(p, s, addr.sin_addr.s_addr);
 						cluster_pkts++;
 					}
 					else
@@ -3603,18 +4499,22 @@ static void mainloop(void)
 				}
 			}
 
-			if (udp_pkts > 1 || tun_pkts > 1 || cluster_pkts > 1)
+			if (udp_pkts[0] > 1 || tun_pkts > 1 || cluster_pkts > 1)
 				STAT(multi_read_used);
 
 			if (c >= config->multi_read_count)
 			{
-				LOG(3, 0, 0, "Reached multi_read_count (%d); processed %d udp, %d tun and %d cluster packets\n",
-					config->multi_read_count, udp_pkts, tun_pkts, cluster_pkts);
-
+				LOG(3, 0, 0, "Reached multi_read_count (%d); processed %d udp, %d tun %d cluster and %d pppoe packets\n",
+					config->multi_read_count, udp_pkts[0], tun_pkts, cluster_pkts, pppoesess_pkts);
 				STAT(multi_read_exceeded);
 				more++;
 			}
 		}
+#ifdef BGP
+		else
+			/* no event received, but timers could still have expired */
+			bgp_process_peers_timers();
+#endif /* BGP */
 
 		if (time_changed)
 		{
@@ -3830,7 +4730,14 @@ static void initdata(int optdebug, char *optconfig)
 	config->ppp_restart_time = 3;
 	config->ppp_max_configure = 10;
 	config->ppp_max_failure = 5;
+	config->kill_timedout_sessions = 1;
 	strcpy(config->random_device, RANDOMDEVICE);
+	// Set default value echo_timeout and idle_echo_timeout
+	config->echo_timeout = ECHO_TIMEOUT;
+	config->idle_echo_timeout = IDLE_ECHO_TIMEOUT;
+	config->ppp_keepalive = 1;
+	// Set default RDNSS lifetime
+	config->dns6_lifetime = 1200;
 
 	log_stream = stderr;
 
@@ -3851,6 +4758,16 @@ static void initdata(int optdebug, char *optconfig)
 	if (!(tunnel = shared_malloc(sizeof(tunnelt) * MAXTUNNEL)))
 	{
 		LOG(0, 0, 0, "Error doing malloc for tunnels: %s\n", strerror(errno));
+		exit(1);
+	}
+	if (!(bundle = shared_malloc(sizeof(bundlet) * MAXBUNDLE)))
+	{
+		LOG(0, 0, 0, "Error doing malloc for bundles: %s\n", strerror(errno));
+		exit(1);
+	}
+	if (!(frag = shared_malloc(sizeof(fragmentationt) * MAXBUNDLE)))
+	{
+		LOG(0, 0, 0, "Error doing malloc for fragmentations: %s\n", strerror(errno));
 		exit(1);
 	}
 	if (!(session = shared_malloc(sizeof(sessiont) * MAXSESSION)))
@@ -3903,6 +4820,7 @@ static void initdata(int optdebug, char *optconfig)
 	memset(cli_tunnel_actions, 0, sizeof(struct cli_tunnel_actions) * MAXSESSION);
 
 	memset(tunnel, 0, sizeof(tunnelt) * MAXTUNNEL);
+	memset(bundle, 0, sizeof(bundlet) * MAXBUNDLE);
 	memset(session, 0, sizeof(sessiont) * MAXSESSION);
 	memset(radius, 0, sizeof(radiust) * MAXRADIUS);
 
@@ -3918,6 +4836,10 @@ static void initdata(int optdebug, char *optconfig)
 		// Mark all the tunnels as undefined (waiting to be filled in by a download).
 	for (i = 1; i < MAXTUNNEL; i++)
 		tunnel[i].state = TUNNELUNDEF;	// mark it as not filled in.
+
+	for (i = 1; i < MAXBUNDLE; i++) {
+		bundle[i].state = BUNDLEUNDEF;
+	}
 
 	if (!*hostname)
 	{
@@ -3942,6 +4864,8 @@ static void initdata(int optdebug, char *optconfig)
 		exit(1);
 	}
 #endif /* BGP */
+
+	lac_initremotelnsdata();
 }
 
 static int assign_ip_address(sessionidt s)
@@ -4108,7 +5032,7 @@ void rebuild_address_pool(void)
 			if (ipid < 1)			// Not found in the pool either? good.
 				continue;
 
-			LOG(0, i, 0, "Session %d has an IP address (%s) that was marked static, but is in the pool (%d)!\n",
+			LOG(0, i, 0, "Session %u has an IP address (%s) that was marked static, but is in the pool (%d)!\n",
 				i, fmtaddr(session[i].ip, 0), ipid);
 
 			// Fall through and process it as part of the pool.
@@ -4117,7 +5041,7 @@ void rebuild_address_pool(void)
 
 		if (ipid > MAXIPPOOL || ipid < 0)
 		{
-			LOG(0, i, 0, "Session %d has a pool IP that's not found in the pool! (%d)\n", i, ipid);
+			LOG(0, i, 0, "Session %u has a pool IP that's not found in the pool! (%d)\n", i, ipid);
 			ipid = -1;
 			session[i].ip_pool_index = ipid;
 			continue;
@@ -4161,22 +5085,18 @@ static void fix_address_pool(int sid)
 //
 // Add a block of addresses to the IP pool to hand out.
 //
-static void add_to_ip_pool(in_addr_t addr, in_addr_t mask,uint8_t x,uint8_t y)
+static void add_to_ip_pool(in_addr_t addr, int prefixlen)
 {
 	int i;
+	if (prefixlen == 0)
+		prefixlen = 32;		// Host route only.
 
-        if (ip_address_pool[x][y] == NULL)
-                malloc_pool(x,y);
-
-	if (mask == 0)
-		mask = 0xffffffff;	// Host route only.
-
-	addr &= mask;
+	addr &= 0xffffffff << (32 - prefixlen);
 
 	if (ip_pool_size[x][y] >= MAXIPPOOL)	// Pool is full!
 		return ;
 
-	for (i = addr ;(i & mask) == addr; ++i)
+	for (i = addr ; i < addr+(1<<(32-prefixlen)); ++i)
 	{
 		if ((i & 0xff) == 0 || (i&0xff) == 255)
 			continue;	// Skip 0 and broadcast addresses.
@@ -4298,7 +5218,7 @@ void initippool(uint8_t x,uint8_t y)
 		{
 			// It's a range
 			int numbits = 0;
-			in_addr_t start = 0, mask = 0;
+			in_addr_t start = 0;
 
 			LOG(2, 0, 0, "Adding IP address range %s\n", buf);
 			*p++ = 0;
@@ -4308,15 +5228,14 @@ void initippool(uint8_t x,uint8_t y)
 				continue;
 			}
 			start = ntohl(inet_addr(pool));
-			mask = (in_addr_t) (pow(2, numbits) - 1) << (32 - numbits);
 
 			// Add a static route for this pool
-			LOG(5, 0, 0, "Adding route for address pool %s/%u\n",
-				fmtaddr(htonl(start), 0), 32 + mask);
+			LOG(5, 0, 0, "Adding route for address pool %s/%d\n",
+				fmtaddr(htonl(start), 0), numbits);
 
-			routeset(0, start, mask, 0, 1);
+			routeset(0, start, numbits, 0, 1);
 
-			add_to_ip_pool(start, mask,x,y);
+			add_to_ip_pool(start, numbits);
 		}
 		else
 		{
@@ -4338,7 +5257,7 @@ void snoop_send_packet(uint8_t *packet, uint16_t size, in_addr_t destination, ui
 	snoop_addr.sin_addr.s_addr = destination;
 	snoop_addr.sin_port = ntohs(port);
 
-	LOG(5, 0, 0, "Snooping %d byte packet to %s:%d\n", size,
+	LOG(5, 0, 0, "Snooping %d byte packet to %s:%u\n", size,
 		fmtaddr(snoop_addr.sin_addr.s_addr, 0),
 		htons(snoop_addr.sin_port));
 
@@ -4352,7 +5271,7 @@ static int dump_session(FILE **f, sessiont *s)
 {
 	LOG(5, 0, 0, "Method dump_session: precondition dump:\n s->opened %u \n IP: %d \ncinDelta: %u \ncoutdelta: %u \nusername: %s \nwalledGardenFlag: %hx \n", s->opened, s->ip, s->cin_delta, s->cout_delta, s->user, s->walled_garden);
 	
-	if (!s->opened || !s->ip || !(s->cin_delta || s->cout_delta) || !*s->user)
+	if (!s->opened || (!s->ip && !s->forwardtosession) || !(s->cin_delta || s->cout_delta) || !*s->user)
 		return 1;
 
         time_t now = time(NULL);
@@ -4375,9 +5294,8 @@ static int dump_session(FILE **f, sessiont *s)
 			LOG(0, 0, 0, "Can't write accounting info to %s: %s\n", filename, strerror(errno));
 			return 0;
 		}
-		
+        LOG(3, 0, 0, "Dumping accounting information to %s\n", filename);
 		if (s->walled_garden) {
-			LOG(3, 0, 0, "Dumping accounting information to %s\n", filename);
 			fprintf(*f, "# dslwatch.pl dump file V1.01\n"
 				"# host: %s\n"
 				"# endpoint: %s\n"
@@ -4385,32 +5303,56 @@ static int dump_session(FILE **f, sessiont *s)
 				"# uptime: %ld\n"
 				"# format: username ip qos uptxoctets downrxoctets usage_interval walled_garden\n",
 				hostname,
-				fmtaddr(config->bind_address ? config->bind_address : my_address, 0),
-				now,
+				fmtaddr(config->iftun_n_address[tunnel[s->tunnel].indexudp] ? config->iftun_n_address[tunnel[s->tunnel].indexudp] : my_address, 0)
+                now,
 				now - basetime);
-		} else {
-			LOG(3, 0, 0, "Dumping accounting information to %s\n", filename);
-			fprintf(*f, "# dslwatch.pl dump file V1.01\n"
-				"# host: %s\n"
-				"# endpoint: %s\n"
-				"# time: %ld\n"
-				"# uptime: %ld\n"
-				"# format: username ip qos uptxoctets downrxoctets usage_interval\n",
-				hostname,
-				fmtaddr(config->bind_address ? config->bind_address : my_address, 0),
-				now,
-				now - basetime);
+		} 
+		if(config->account_all_origin)
+		{
+		fprintf(*f, "# dslwatch.pl dump file V1.01\n"
+			"# host: %s\n"
+			"# endpoint: %s\n"
+			"# time: %ld\n"
+			"# uptime: %ld\n"
+			"# format: username ip qos uptxoctets downrxoctets origin(L=LAC, R=Remote LNS, P=PPPOE) usage_interval\n",
+			hostname,
+			fmtaddr(config->iftun_n_address[tunnel[s->tunnel].indexudp] ? config->iftun_n_address[tunnel[s->tunnel].indexudp] : my_address, 0),
+			now,
+			now - basetime);
+		}
+		else
+		{
+		fprintf(*f, "# dslwatch.pl dump file V1.01\n"
+			"# host: %s\n"
+			"# endpoint: %s\n"
+			"# time: %ld\n"
+			"# uptime: %ld\n"
+			"# format: username ip qos uptxoctets downrxoctets usage_interval\n",
+			hostname,
+			fmtaddr(config->iftun_n_address[tunnel[s->tunnel].indexudp] ? config->iftun_n_address[tunnel[s->tunnel].indexudp] : my_address, 0),
+			now,
+			now - basetime);
 		}
 	}
 
 
 	LOG(4, 0, 0, "Dumping accounting information for %s\n", s->user);
+	
+    // The memory is zero filled on initalization so this is safe.
+    if (!s->last_dump)
+        s->last_dump = s->opened;
+    
+    if(config->account_all_origin) {
+	fprintf(*f, "%s %s %d %u %u %s\n",
+		s->user,						// username
+		fmtaddr(htonl(s->ip), 0),				// ip
+		(s->throttle_in || s->throttle_out) ? 2 : 1,		// qos
+		(uint32_t) s->cin_delta,				// uptxoctets
+		(uint32_t) s->cout_delta,				// downrxoctets
+		(s->tunnel == TUNNEL_ID_PPPOE)?"P":(tunnel[s->tunnel].isremotelns?"R":"L"));	// Origin
+        (uint32_t) (now - s->last_dump),
 
-        // The memory is zero filled on initalization so this is safe.
-        if (!s->last_dump)
-                s->last_dump = s->opened;
-
-	if (s->walled_garden) {
+	} else if (s->walled_garden) {
 	fprintf(*f, "%s %s %d %u %u %u %s\n",
 			s->user,						// username
 			fmtaddr(htonl(s->ip), 0),				// ip
@@ -4419,14 +5361,14 @@ static int dump_session(FILE **f, sessiont *s)
 			(uint32_t) s->cout_delta,				// downrxoctets
 			(uint32_t) (now - s->last_dump),
 			s->walled_garden_name);		                        // walled garden name 
-	} else {
-		fprintf(*f, "%s %s %d %u %u %u\n",
-			s->user,						// username
-			fmtaddr(htonl(s->ip), 0),				// ip
-			(s->throttle_in || s->throttle_out) ? 2 : 1,		// qos
-			(uint32_t) s->cin_delta,				// uptxoctets
-			(uint32_t) s->cout_delta,				// downrxoctets
-			(uint32_t) (now - s->last_dump));                       // time_used
+	} else if (!tunnel[s->tunnel].isremotelns && (s->tunnel != TUNNEL_ID_PPPOE)) {
+	fprintf(*f, "%s %s %d %u %u\n",
+		s->user,						// username
+		fmtaddr(htonl(s->ip), 0),				// ip
+		(s->throttle_in || s->throttle_out) ? 2 : 1,		// qos
+		(uint32_t) s->cin_delta,				// uptxoctets
+		(uint32_t) s->cout_delta);				// downrxoctets
+        (uint32_t) (now - s->last_dump);                       // time_used
 	}
 
 
@@ -4508,9 +5450,9 @@ int main(int argc, char *argv[])
 		case 'd':
 			if (fork()) exit(0);
 			setsid();
-			freopen("/dev/null", "r", stdin);
-			freopen("/dev/null", "w", stdout);
-			freopen("/dev/null", "w", stderr);
+			if(!freopen("/dev/null", "r", stdin)) LOG(0, 0, 0, "Error freopen stdin: %s\n", strerror(errno));
+			if(!freopen("/dev/null", "w", stdout)) LOG(0, 0, 0, "Error freopen stdout: %s\n", strerror(errno));
+			if(!freopen("/dev/null", "w", stderr)) LOG(0, 0, 0, "Error freopen stderr: %s\n", strerror(errno));
 			break;
 		case 'v':
 			optdebug++;
@@ -4540,13 +5482,18 @@ int main(int argc, char *argv[])
 	initplugins();
 	initdata(optdebug, optconfig);
 
-	init_cli(hostname);
+	init_cli();
 	read_config_file();
+	/* set hostname /after/ having read the config file */
+	if (*config->hostname)
+		strcpy(hostname, config->hostname);
+	cli_init_complete(hostname);
 	update_config();
 	init_tbf(config->num_tbfs);
 
 	LOG(0, 0, 0, "L2TPNS version " VERSION "\n");
-	LOG(0, 0, 0, "Copyright (c) 2003, 2004, 2005 Optus Internet Engineering\n");
+	LOG(0, 0, 0, "Copyright (c) 2012, 2013, 2014 ISP FDN & SAMESWIRELESS\n");
+	LOG(0, 0, 0, "Copyright (c) 2003, 2004, 2005, 2006 Optus Internet Engineering\n");
 	LOG(0, 0, 0, "Copyright (c) 2002 FireBrick (Andrews & Arnold Ltd / Watchfront Ltd) - GPL licenced\n");
 	{
 		struct rlimit rlim;
@@ -4557,7 +5504,7 @@ int main(int argc, char *argv[])
 			LOG(0, 0, 0, "Can't set ulimit: %s\n", strerror(errno));
 
 		// Make core dumps go to /tmp
-		chdir("/tmp");
+		if(chdir("/tmp")) LOG(0, 0, 0, "Error chdir /tmp: %s\n", strerror(errno));
 	}
 
 	if (config->scheduler_fifo)
@@ -4585,24 +5532,46 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	initnetlink();
+
 	/* Set up the cluster communications port. */
 	if (cluster_init() < 0)
 		exit(1);
 
 	inittun();
-	LOG(1, 0, 0, "Set up on interface %s\n", config->tundevice);
+	LOG(1, 0, 0, "Set up on interface %s\n", config->tundevicename);
 
-	initudp();
+	if (*config->pppoe_if_to_bind)
+	{
+		init_pppoe();
+		LOG(1, 0, 0, "Set up on pppoe interface %s\n", config->pppoe_if_to_bind);
+	}
+
+	if (!config->nbmultiaddress)
+	{
+		config->bind_n_address[0] = config->bind_address;
+		config->nbmultiaddress++;
+	}
+	config->nbudpfd = config->nbmultiaddress;
+	for (i = 0; i < config->nbudpfd; i++)
+		initudp(&udpfd[i], config->bind_n_address[i]);
+	initlacudp();
+	config->indexlacudpfd = config->nbudpfd;
+	udpfd[config->indexlacudpfd] = udplacfd;
+	config->nbudpfd++;
+
+	initcontrol();
+	initdae();
+
+	// Intercept
+	snoopfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
 	initrad();
-
-        for (x = 0; x<256;x++) {
-          for (y = 0; y<256;y++) {
-            initippool(x,y);
-          }
-        }
 #ifdef FREETRAFFIC
 	initfreenetworks();
 #endif
+	initippool();
+	dhcpv6_init();
 
 	// seed prng
 	{
@@ -4625,10 +5594,6 @@ int main(int argc, char *argv[])
 		else
 			LOG(0, 0, 0, "Can't lock pages: %s\n", strerror(errno));
 	}
-
-	// Drop privileges here
-	if (config->target_uid > 0 && geteuid() == 0)
-		setuid(config->target_uid);
 
 	mainloop();
 
@@ -4863,6 +5828,104 @@ static void update_config()
 	if (!config->radius_dae_port)
 		config->radius_dae_port = DAEPORT;
 
+	if(!config->bind_portremotelns)
+		config->bind_portremotelns = L2TPLACPORT;
+	if(!config->bind_address_remotelns)
+		config->bind_address_remotelns = INADDR_ANY;
+
+	if (*config->bind_multi_address)
+	{
+		char *sip = config->bind_multi_address;
+		char *n = sip;
+		char *e = config->bind_multi_address + strlen(config->bind_multi_address);
+		config->nbmultiaddress = 0;
+
+		while (*sip && (sip < e))
+		{
+			in_addr_t ip = 0;
+			uint8_t u = 0;
+
+			while (n < e && (*n == ',' || *n == ' ')) n++;
+
+			while (n < e && (isdigit(*n) || *n == '.'))
+			{
+				 if (*n == '.')
+				 {
+					 ip = (ip << 8) + u;
+					 u = 0;
+				 }
+				 else
+					u = u * 10 + *n - '0';
+				 n++;
+			}
+			ip = (ip << 8) + u;
+			n++;
+
+			if (ip)
+			{
+				config->bind_n_address[config->nbmultiaddress] = htonl(ip);
+				config->iftun_n_address[config->nbmultiaddress] = htonl(ip);
+				config->nbmultiaddress++;
+				LOG(1, 0, 0, "Bind address %s\n", fmtaddr(htonl(ip), 0));
+
+				if (config->nbmultiaddress >= MAX_BINDADDR) break;
+			}
+
+			sip = n;
+		}
+
+		if (config->nbmultiaddress >= 1)
+		{
+			config->bind_address = config->bind_n_address[0];
+			config->iftun_address = config->bind_address;
+		}
+	}
+
+	if(!config->iftun_address)
+	{
+		config->iftun_address = config->bind_address;
+		config->iftun_n_address[0] = config->iftun_address;
+	}
+
+	if (*config->multi_hostname)
+	{
+		char *shost = config->multi_hostname;
+		char *n = shost;
+		char *e = config->multi_hostname + strlen(config->multi_hostname);
+		config->nbmultihostname = 0;
+
+		while (*shost && (shost < e))
+		{
+			while ((n < e) && (*n == ' ' || *n == ',' || *n == '\t')) n++;
+
+			i = 0;
+			while (n < e && (*n != ',') && (*n != '\t'))
+			{
+				config->multi_n_hostname[config->nbmultihostname][i] = *n;
+				n++;i++;
+			}
+
+			if (i > 0)
+			{
+				config->multi_n_hostname[config->nbmultihostname][i] = 0;
+				LOG(1, 0, 0, "Bind Hostname %s\n", config->multi_n_hostname[config->nbmultihostname]);
+				config->nbmultihostname++;
+				if (config->nbmultihostname >= MAX_NBHOSTNAME) break;
+			}
+
+			shost = n;
+		}
+
+		if (config->nbmultihostname >= 1)
+		{
+			strcpy(hostname, config->multi_n_hostname[0]);
+			strcpy(config->hostname, hostname);
+		}
+	}
+
+	if (!*config->pppoe_ac_name)
+		strncpy(config->pppoe_ac_name, DEFAULT_PPPOE_AC_NAME, sizeof(config->pppoe_ac_name) - 1);
+
 	// re-initialise the random number source
 	initrandom(config->random_device);
 
@@ -4884,9 +5947,44 @@ static void update_config()
 		}
 	}
 
+	// Guest change
+        guest_accounts_num = 0;
+        char *p2 = config->guest_user;
+        while (p2 && *p2)
+        {
+                char *s = strpbrk(p2, " \t,");
+                if (s)
+                {
+                        *s++ = 0;
+                        while (*s == ' ' || *s == '\t')
+                                s++;
+
+                        if (!*s)
+                                s = 0;
+                }
+
+                strcpy(guest_users[guest_accounts_num], p2);
+                LOG(1, 0, 0, "Guest account[%d]: %s\n", guest_accounts_num, guest_users[guest_accounts_num]);
+                guest_accounts_num++;
+                p2 = s;
+        }
+        // Rebuild the guest_user array
+        strcpy(config->guest_user, "");
+        int ui = 0;
+        for (ui=0; ui<guest_accounts_num; ui++)
+        {
+                strcat(config->guest_user, guest_users[ui]);
+                if (ui<guest_accounts_num-1)
+                {
+                        strcat(config->guest_user, ",");
+                }
+        }
+
+
 	memcpy(config->old_plugins, config->plugins, sizeof(config->plugins));
 	if (!config->multi_read_count) config->multi_read_count = 10;
 	if (!config->cluster_address) config->cluster_address = inet_addr(DEFAULT_MCAST_ADDR);
+	if (!config->cluster_port) config->cluster_port = CLUSTERPORT;
 	if (!*config->cluster_interface)
 		strncpy(config->cluster_interface, DEFAULT_MCAST_INTERFACE, sizeof(config->cluster_interface) - 1);
 
@@ -4962,6 +6060,20 @@ int sessionsetup(sessionidt s, tunnelidt t)
 
 	LOG(3, s, t, "Doing session setup for session\n");
 
+	// Join a bundle if the MRRU option is accepted
+	if(session[s].mrru > 0 && session[s].bundle == 0)
+	{
+		LOG(3, s, t, "This session can be part of multilink bundle\n");
+		if (join_bundle(s) > 0)
+			cluster_send_bundle(session[s].bundle);
+		else
+		{
+			LOG(0, s, t, "MPPP: Mismaching mssf option with other sessions in bundle\n");
+			sessionshutdown(s, "Mismaching mssf option.", CDN_NONE, TERM_SERVICE_UNAVAILABLE);
+			return 0;
+		}
+	}
+
 	if (!session[s].ip)
 	{
 		assign_ip_address(s);
@@ -4976,7 +6088,6 @@ int sessionsetup(sessionidt s, tunnelidt t)
 			fmtaddr(htonl(session[s].ip), 0));
 	}
 
-
 	// Make sure this is right
 	session[s].tunnel = t;
 
@@ -4989,7 +6100,10 @@ int sessionsetup(sessionidt s, tunnelidt t)
 		for (i = 1; i <= config->cluster_highest_sessionid; i++)
 		{
 			if (i == s) continue;
-			if (!session[s].opened) continue;
+			if (!session[s].opened) break;
+			// Allow duplicate sessions for multilink ones of the same bundle.
+			if (session[s].bundle && session[i].bundle && session[s].bundle == session[i].bundle) continue;
+
 			if (ip == session[i].ip)
 			{
 				if (!config->allow_duplicate_ip) {
@@ -5008,22 +6122,38 @@ int sessionsetup(sessionidt s, tunnelidt t)
 
 			if (config->allow_duplicate_users) continue;
 			if (session[s].walled_garden || session[i].walled_garden) continue;
+			// Guest change
+			int found = 0;
+			int gu;
+			for (gu = 0; gu < guest_accounts_num; gu++)
+			{
+				if (!strcasecmp(user, guest_users[gu]))
+				{
+					found = 1;
+					break;
+				}
+			}
+			if (found) continue;
+
+			// Drop the new session in case of duplicate sessionss, not the old one.
 			if (!strcasecmp(user, session[i].user))
-				sessionkill(i, "Duplicate session for users", TERM_ADMIN_RESET);
+				sessionshutdown(i, "Duplicate session for users", CDN_ADMIN_DISC, TERM_ADMIN_RESET);  // close radius/routes, etc.
 		}
 	}
 
+	// no need to set a route for the same IP address of the bundle
+	if (!session[s].bundle || (bundle[session[s].bundle].num_of_links == 1))
 	{
-	    	int routed = 0;
+		int routed = 0;
 
 		// Add the route for this session.
 		for (r = 0; r < MAXROUTE && session[s].route[r].ip; r++)
 		{
-			if ((session[s].ip & session[s].route[r].mask) ==
-			    (session[s].route[r].ip & session[s].route[r].mask))
+			if ((session[s].ip >> (32-session[s].route[r].prefixlen)) ==
+			    (session[s].route[r].ip >> (32-session[s].route[r].prefixlen)))
 				routed++;
 
-			routeset(s, session[s].route[r].ip, session[s].route[r].mask, 0, 1);
+			routeset(s, session[s].route[r].ip, session[s].route[r].prefixlen, 0, 1);
 		}
 
 		// Static IPs need to be routed if not already
@@ -5056,7 +6186,7 @@ int sessionsetup(sessionidt s, tunnelidt t)
 	if (session[s].throttle_in || session[s].throttle_out)
 		throttle_session(s, session[s].throttle_in, session[s].throttle_out);
 
-	session[s].last_packet = time_now;
+	session[s].last_packet = session[s].last_data = time_now;
 
 	LOG(2, s, t, "Login by %s at %s from %s (%s)\n", session[s].user,
 		fmtaddr(htonl(session[s].ip), 0),
@@ -5098,22 +6228,22 @@ int load_session(sessionidt s, sessiont *new)
 
 	for (i = 0; !newip && i < MAXROUTE && (session[s].route[i].ip || new->route[i].ip); i++)
 		if (new->route[i].ip != session[s].route[i].ip ||
-		    new->route[i].mask != session[s].route[i].mask)
+		    new->route[i].prefixlen != session[s].route[i].prefixlen)
 			newip++;
 
 	// needs update
 	if (newip)
 	{
-	    	int routed = 0;
+		int routed = 0;
 
 		// remove old routes...
 		for (i = 0; i < MAXROUTE && session[s].route[i].ip; i++)
 		{
-			if ((session[s].ip & session[s].route[i].mask) ==
-			    (session[s].route[i].ip & session[s].route[i].mask))
+			if ((session[s].ip >> (32-session[s].route[i].prefixlen)) ==
+			    (session[s].route[i].ip >> (32-session[s].route[i].prefixlen)))
 				routed++;
 
-			routeset(s, session[s].route[i].ip, session[s].route[i].mask, 0, 0);
+			routeset(s, session[s].route[i].ip, session[s].route[i].prefixlen, 0, 0);
 		}
 
 		// ...ip
@@ -5127,16 +6257,27 @@ int load_session(sessionidt s, sessiont *new)
 				uncache_ipmap(session[s].ip);
 		}
 
+		// remove old IPV6 routes...
+		for (i = 0; i < MAXROUTE6 && session[s].route6[i].ipv6route.s6_addr[0] && session[s].route6[i].ipv6prefixlen; i++)
+		{
+			route6set(s, session[s].route6[i].ipv6route, session[s].route6[i].ipv6prefixlen, 0);
+		}
+
+		if (session[s].ipv6address.s6_addr[0])
+		{
+			route6set(s, session[s].ipv6address, 128, 0);
+		}
+
 		routed = 0;
 
 		// add new routes...
 		for (i = 0; i < MAXROUTE && new->route[i].ip; i++)
 		{
-			if ((new->ip & new->route[i].mask) ==
-			    (new->route[i].ip & new->route[i].mask))
+			if ((new->ip >> (32-new->route[i].prefixlen)) ==
+			    (new->route[i].ip >> (32-new->route[i].prefixlen)))
 				routed++;
 
-			routeset(s, new->route[i].ip, new->route[i].mask, 0, 1);
+			routeset(s, new->route[i].ip, new->route[i].prefixlen, 0, 1);
 		}
 
 		// ...ip
@@ -5153,19 +6294,31 @@ int load_session(sessionidt s, sessiont *new)
 	}
 
 	// check v6 routing
-	if (new->ipv6prefixlen && new->ppp.ipv6cp == Opened && session[s].ppp.ipv6cp != Opened)
-		    route6set(s, new->ipv6route, new->ipv6prefixlen, 1);
+	if (new->ppp.ipv6cp == Opened && session[s].ppp.ipv6cp != Opened)
+	{
+		for (i = 0; i < MAXROUTE6 && new->route6[i].ipv6prefixlen; i++)
+		{
+			route6set(s, new->route6[i].ipv6route, new->route6[i].ipv6prefixlen, 1);
+		}
+	}
+
+	if (new->ipv6address.s6_addr[0] && new->ppp.ipv6cp == Opened && session[s].ppp.ipv6cp != Opened)
+	{
+		// Check if included in prefix
+		if (sessionbyipv6(new->ipv6address) != s)
+			route6set(s, new->ipv6address, 128, 1);
+	}
 
 	// check filters
 	if (new->filter_in && (new->filter_in > MAXFILTER || !ip_filters[new->filter_in - 1].name[0]))
 	{
-		LOG(2, s, session[s].tunnel, "Dropping invalid input filter %d\n", (int) new->filter_in);
+		LOG(2, s, session[s].tunnel, "Dropping invalid input filter %u\n", (int) new->filter_in);
 		new->filter_in = 0;
 	}
 
 	if (new->filter_out && (new->filter_out > MAXFILTER || !ip_filters[new->filter_out - 1].name[0]))
 	{
-		LOG(2, s, session[s].tunnel, "Dropping invalid output filter %d\n", (int) new->filter_out);
+		LOG(2, s, session[s].tunnel, "Dropping invalid output filter %u\n", (int) new->filter_out);
 		new->filter_out = 0;
 	}
 
@@ -5547,9 +6700,9 @@ static tunnelidt new_tunnel()
 	tunnelidt i;
 	for (i = 1; i < config->max_tunnels; i++)
 	{
-		if (tunnel[i].state == TUNNELFREE)
+		if ((tunnel[i].state == TUNNELFREE) && (i != TUNNEL_ID_PPPOE))
 		{
-			LOG(4, 0, i, "Assigning tunnel ID %d\n", i);
+			LOG(4, 0, i, "Assigning tunnel ID %u\n", i);
 			if (i > config->cluster_highest_tunnelid)
 				config->cluster_highest_tunnelid = i;
 			return i;
@@ -5601,7 +6754,7 @@ void become_master(void)
 	}
 }
 
-int cmd_show_hist_idle(struct cli_def *cli, char *command, char **argv, int argc)
+int cmd_show_hist_idle(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int s, i;
 	int count = 0;
@@ -5619,7 +6772,7 @@ int cmd_show_hist_idle(struct cli_def *cli, char *command, char **argv, int argc
 		if (!session[s].opened)
 			continue;
 
-		idle = time_now - session[s].last_packet;
+		idle = time_now - session[s].last_data;
 		idle /= 5 ; // In multiples of 5 seconds.
 		if (idle < 0)
 			idle = 0;
@@ -5639,7 +6792,7 @@ int cmd_show_hist_idle(struct cli_def *cli, char *command, char **argv, int argc
 	return CLI_OK;
 }
 
-int cmd_show_hist_open(struct cli_def *cli, char *command, char **argv, int argc)
+int cmd_show_hist_open(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int s, i;
 	int count = 0;
@@ -5864,3 +7017,49 @@ int ip_filter(uint8_t *buf, int len, uint8_t filter)
 	// default deny
     	return 0;
 }
+
+tunnelidt lac_new_tunnel()
+{
+	return new_tunnel();
+}
+
+void lac_tunnelclear(tunnelidt t)
+{
+	tunnelclear(t);
+}
+
+void lac_send_SCCRQ(tunnelidt t, uint8_t * auth, unsigned int auth_len)
+{
+	uint16_t version = 0x0100;	// protocol version
+
+	tunnel[t].state = TUNNELOPENING;
+
+	// Sent SCCRQ - Start Control Connection Request
+	controlt *c = controlnew(1); // sending SCCRQ
+	controls(c, 7, config->multi_n_hostname[tunnel[t].indexudp][0]?config->multi_n_hostname[tunnel[t].indexudp]:hostname, 1); // host name
+	controls(c, 8, Vendor_name, 1); // Vendor name
+	control16(c, 2, version, 1); // protocol version
+	control32(c, 3, 3, 1); // framing Capabilities
+	control16(c, 9, t, 1); // assigned tunnel
+	controlb(c, 11, (uint8_t *) auth, auth_len, 1);  // CHAP Challenge
+	LOG(3, 0, t, "Sent SCCRQ to REMOTE LNS\n");
+	controladd(c, 0, t); // send
+}
+
+void lac_send_ICRQ(tunnelidt t, sessionidt s)
+{
+	// Sent ICRQ  Incoming-call-request
+	controlt *c = controlnew(10); // ICRQ
+
+	control16(c, 14, s, 1); // assigned sesion
+	call_serial_number++;
+	control32(c, 15, call_serial_number, 1);  // call serial number
+	LOG(3, s, t, "Sent ICRQ to REMOTE LNS (far ID %u)\n", tunnel[t].far);
+	controladd(c, 0, t); // send
+}
+
+void lac_tunnelshutdown(tunnelidt t, char *reason, int result, int error, char *msg)
+{
+	tunnelshutdown(t, reason, result, error, msg);
+}
+

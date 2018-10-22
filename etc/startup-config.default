@@ -7,6 +7,9 @@ set log_file "/var/log/l2tpns"
 # Write pid to this file
 set pid_file "/var/run/l2tpns.pid"
 
+# This host name, if different from the OS one
+#set hostname "localhost"
+
 # Shared secret with LAC
 set l2tp_secret "secret"
 
@@ -65,6 +68,11 @@ set radius_secret "secret"
 # and not drop the BGP-announced route for static ips? 
 #set suicide_duplicate_ip no
 
+# Kill timedout sessions ? (default yes)
+#set kill_timedout_sessions no
+
+# Allow multiple logins for specific username
+#set guest_account ""
 
 # Write usage accounting files into specified directory
 set accounting_dir "/var/run/l2tpns/acct"
@@ -72,6 +80,9 @@ set garden_accounting_dir "/var/run/l2tpns/gardenacct"
 
 # Listen address for L2TP
 #set bind_address 1.1.1.1
+
+# Listen address for CLI
+#set cli_bind_address 127.0.0.1
 
 # Send a gratiuitous ARP for bind address
 #set send_garp no
@@ -84,9 +95,6 @@ set garden_accounting_dir "/var/run/l2tpns/gardenacct"
 
 # Number of buckets to allocate for throttling
 #set throttle_buckets 3000
-
-# If set to anything other than 0, setuid when initialised.
-#set setuid 0
 
 # If set to true, dump current speed to stderr every second
 #set dump_speed no
@@ -110,6 +118,7 @@ set garden_accounting_dir "/var/run/l2tpns/gardenacct"
 
 # Cluster multicast address, interface
 #set cluster_address 239.192.13.13
+#set cluster_port 32792
 #set cluster_interface eth0
 
 # Cluster multicast TTL
@@ -121,6 +130,20 @@ set garden_accounting_dir "/var/run/l2tpns/gardenacct"
 
 # Minimum number of slaves before master withdraws routes
 #set cluster_master_min_adv 1
+
+# IPv6 address prefix
+#set ipv6_prefix ::
+
+# BGP NEXT_HOP path attribute
+#set nexthop 10.0.1.1
+#set nexthop6 2001:db8::1
+
+# Time between last packet sent and LCP ECHO generation (default 10 seconds)
+#set echo_timeout 10
+# Drop sessions who have not responded within idle_echo_timeout seconds (default 240 seconds)
+#set idle_echo_timeout 240
+# Change this value to no to force generation of LCP ECHO every echo_timeout seconds, even there are activity on the link (default yes)
+set ppp_keepalive yes
 
 # Drop/kill sessions
 #load plugin "sessionctl"

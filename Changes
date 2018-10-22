@@ -1,16 +1,78 @@
-* Fri Dec 1 2006 Brendan O'Dea <bod@optus.net> 2.1.21
-- Security: Rhys Kidd identified a vulnerability in the handling of
-  heartbeat packets.  Drop oversize heartbeat packets.
+* 2014 Fernando Alves <fernando.alves@sameswireless.fr> 2.2.1-2fdn x
+- new feature: If the user attribute "Framed-IPv6-Address" is defined then the ICMPv6_RA advertise this IPv6 address.
+- Fix: Incorrect delegation of IPv6 prefixes when multiple of 4 bits (nibble) (eg: /44, /52 ...).
+- Added ability to define up to 5 IPv6 prefix delegation by user.
+- Fix: IPv6 prefix routing on slave cluster
+- Add of the RDNSS option to ICMPv6 Router Advertisement (RA).
+- Add of the ppp_keepalive option.
 
-* Thu Aug 3 2006 Brendan O'Dea <bod@optus.net> 2.1.20
-- Fix sign problem with reporting of unknown VSAs.
-- Allow DNS servers to be specified either using the old or new
-  vendor-specific Ascend formats.
+* 2013 Fernando Alves <fernando.alves@sameswireless.fr> 2.2.1-2fdn x
+- Add tundevicename configuration option
+- Fix: last_packet no updated in cluster mode
+- Authorize to change the source IP of the tunnels l2tp
+- Add pppoe server functionality
+- Add parameter to disable the send of the L2TP HELLO message (Apple compatibility)
+- Fix: Tunnel creation does not work when the length of the hostname is odd
+- Adding the possibility to listening multiple IP L2TP Tunnels
+- Removing LAC flag
+- Fix: send SCCCN requested challenge response
+- add accounting parameter account_all_origin
+- Fix service_name management and add pppoe_only_equal_svc_name parameter
+- Adding the possibility to set multiple hostname
+- Fix: authentication success was sent 2 times
+- Fix: throttle ipv6 out.
+- Fix: remove old IPV6 routes on slave
+- Fix: compiling Warning, dpkg-buildflags ...
+- Enabled hardened build flags, thanks Moritz Muehlenhoff (closes: #657846)
+- Packaging updates
+- Move to 3.0 (native) source format
+- Bump DH compat level to 8
+- Fix ordering of stdio.h/syslog.h includes (closes: #707385)
+- Create accounting_dir in init script if necessary (closes: #418156)
+- Bump Standards-Version to 3.9.4.0
+- Add build-arch/build-indep targets to debian/rules
+- Fix: compiling Warning
+- Fix: remove old IPV6 routes on master
+- Add DHCPv6 functionality
+- Fix cluster slave; no add the ipv6 route address (/128) if included in the delegated prefix.
+- Fix cluster slave; reset to 0, the end of the session when the master version < slave version.
 
-* Fri Jun 23 2006 Brendan O'Dea <bod@optus.net> 2.1.19
+* 2012 Fernando Alves <fernando.alves@sameswireless.fr> 2.2.1-2fdn x
+- Fix MLPPP functionality.
+- Fix the inverted "delete/add" of the routes, in cluster mode.
+- Add a echo_timeout configuration option.
+- Add a idle_echo_timeout configuration option.
+- Add LAC functionality, possibility to forward ppp to Remote LNS.
+
+* Sun Sep 11 2011 Brendan O'Dea <bod@optus.net> 2.2.x
+- Apply MLPPP patch from Muhammad Tayseer Alquoatli.
+- Apply patch from Michael O to avoid sending multiple CDNs.
+- Apply patch from Cyril Elkaim to fix an issue with MacOS.
+- Apply patch from Geoffrey D. Bennett to fix retry of control packets.
+- Apply patch from Geoffrey D. Bennett to handle RADIUS Class attribute.
+- Bump heartbeat version to handle Class entry in session (v6).
+- Re-arrange session struct to remove padding.
+- Update cluster code to handle v6 packets.  Drop compatability for pre-v5.
+- Clean up some compiler errors.
+
+* Mon Dec 18 2006 Brendan O'Dea <bod@optus.net> 2.2.0
+- Only poll clifd if successfully bound.
+- Add "Practical VPNs" document from Liran Tal as Docs/vpn .
+- Add Multilink support from Khaled Al Hamwi.
+- Remove non-working setuid option.
+- Convert manual.html to Docbook.
 - Kludge around problem with Netgear DM602 authentication.
+- Add session/idle timeouts (Graham Maltby).
 - Use result code AVP to set Acct-Terminate-Cause is disconnect cause
   AVP is not present.
+- Add radius_bind_{min,max} to simplify firewalling of RADIUS ports.
+- Fix sign problem with reporting of unknown RADIUS VSAs.
+- Allow DNS servers to be specified either using the old or new
+  vendor-specific Ascend formats.
+- Security [CVE-2006-5873]: Rhys Kidd identified a vulnerability in the
+  handling of heartbeat packets.  Drop oversize heartbeat packets.
+- Don't send interim records before session start (Daryl Tester).
+- Add "shutdown" and "reload" CLI commands (Daryl Tester).
 
 * Tue Apr 18 2006 Brendan O'Dea <bod@optus.net> 2.1.18
 - Don't shutdown on TerminateReq, wait for CDN.

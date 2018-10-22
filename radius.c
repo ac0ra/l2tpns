@@ -1,7 +1,5 @@
 // L2TPNS Radius Stuff
 
-char const *cvs_id_radius = "$Id: radius.c,v 1.49.2.2 2006/08/02 14:17:20 bodea Exp $";
-
 #include <time.h>
 #include <stdio.h>
 #include <sys/types.h>
@@ -13,12 +11,17 @@ char const *cvs_id_radius = "$Id: radius.c,v 1.49.2.2 2006/08/02 14:17:20 bodea 
 #include <ctype.h>
 #include <netinet/in.h>
 #include <errno.h>
+
 #include "md5.h"
 #include "constants.h"
+#include "dhcp6.h"
 #include "l2tpns.h"
 #include "plugin.h"
 #include "util.h"
 #include "cluster.h"
+
+#include "l2tplac.h"
+#include "pppoe.h"
 
 extern radiust *radius;
 extern sessiont *session;
@@ -45,6 +48,25 @@ static void calc_auth(const void *buf, size_t len, const uint8_t *in, uint8_t *o
 void initrad(void)
 {
 	int i;
+	uint16_t port = 0;
+	uint16_t min = config->radius_bind_min;
+	uint16_t max = config->radius_bind_max;
+	int inc = 1;
+	struct sockaddr_in addr;
+
+	if (min)
+	{
+		port = min;
+		if (!max)
+			max = ~0 - 1;
+	}
+	else if (max) /* no minimum specified, bind from max down */
+	{
+		port = max;
+		min = 1;
+		inc = -1;
+	}
+
 	LOG(3, 0, 0, "Creating %d sockets for RADIUS queries\n", RADIUS_FDS);
 	radfds = calloc(sizeof(int), RADIUS_FDS);
 	for (i = 0; i < RADIUS_FDS; i++)
@@ -53,6 +75,27 @@ void initrad(void)
 		radfds[i] = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 		flags = fcntl(radfds[i], F_GETFL, 0);
 		fcntl(radfds[i], F_SETFL, flags | O_NONBLOCK);
+
+		if (port)
+		{
+			int b;
+
+			memset(&addr, 0, sizeof(addr));
+			addr.sin_family = AF_INET;
+			addr.sin_addr.s_addr = INADDR_ANY;
+
+			do {
+				addr.sin_port = htons(port);
+				if ((b = bind(radfds[i], (struct sockaddr *) &addr, sizeof(addr))) < 0)
+				{
+					if ((port += inc) < min || port > max)
+					{
+						LOG(0, 0, 0, "Can't bind RADIUS socket in range %u-%u\n", min, max);
+						exit(1);
+					}
+				}
+			} while (b < 0);
+		}
 	}
 }
 
@@ -137,7 +180,7 @@ void radiussend(uint16_t r, uint8_t state)
 		return;
 	}
 
-	if (state != RADIUSAUTH && !config->radius_accounting)
+	if (state != RADIUSAUTH && state != RADIUSJUSTAUTH && !config->radius_accounting)
 	{
 		// Radius accounting is turned off
 		radiusclear(r, s);
@@ -157,7 +200,7 @@ void radiussend(uint16_t r, uint8_t state)
 	{
 		if (s)
 		{
-			if (state == RADIUSAUTH)
+			if (state == RADIUSAUTH || state == RADIUSJUSTAUTH)
 				sessionshutdown(s, "RADIUS timeout.", CDN_ADMIN_DISC, TERM_REAUTHENTICATION_FAILURE);
 			else
 			{
@@ -179,6 +222,7 @@ void radiussend(uint16_t r, uint8_t state)
 	switch (state)
 	{
 		case RADIUSAUTH:
+		case RADIUSJUSTAUTH:
 			b[0] = AccessRequest;               // access request
 			break;
 		case RADIUSSTART:
@@ -191,6 +235,7 @@ void radiussend(uint16_t r, uint8_t state)
 	}
 	b[1] = r >> RADIUS_SHIFT;       // identifier
 	memcpy(b + 4, radius[r].auth, 16);
+
 	p = b + 20;
 	if (s)
 	{
@@ -199,7 +244,7 @@ void radiussend(uint16_t r, uint8_t state)
 		strcpy((char *) p + 2, session[s].user);
 		p += p[1];
 	}
-	if (state == RADIUSAUTH)
+	if (state == RADIUSAUTH || state == RADIUSJUSTAUTH)
 	{
 		if (radius[r].chap)
 		{
@@ -324,12 +369,20 @@ void radiussend(uint16_t r, uint8_t state)
 				}
 			}
 
+			if (session[s].classlen) {
+				*p = 25;	// class
+				p[1] = session[s].classlen + 2;
+				memcpy(p + 2, session[s].class, session[s].classlen);
+				p += p[1];
+			}
+
 			{
 				struct param_radius_account acct = { &tunnel[session[s].tunnel], &session[s], &p };
 				run_plugins(PLUGIN_RADIUS_ACCOUNT, &acct);
 			}
 		}
 	}
+
 	if (s)
 	{
 		*p = 5;		// NAS-Port
@@ -339,59 +392,70 @@ void radiussend(uint16_t r, uint8_t state)
 
 	        *p = 6;		// Service-Type
 		p[1] = 6;
-		*(uint32_t *) (p + 2) = htonl(2); // Framed-User
+		*(uint32_t *) (p + 2) = htonl((state == RADIUSJUSTAUTH ? 8 : 2)); // Authenticate only or Framed-User respectevily
 		p += p[1];
 		   
 	        *p = 7;		// Framed-Protocol
-		p[1] = 6;
-		*(uint32_t *) (p + 2) = htonl(1); // PPP
+		p[1] = htonl((state == RADIUSJUSTAUTH ? 0 : 6));
+		*(uint32_t *) (p + 2) = htonl((state == RADIUSJUSTAUTH ? 0 : 1)); // PPP
 		p += p[1];
-	}
-	if (s && session[s].ip)
-	{
-		*p = 8;			// Framed-IP-Address
-		p[1] = 6;
-		*(uint32_t *) (p + 2) = htonl(session[s].ip);
-		p += p[1];
-	}
-	if (s && session[s].route[0].ip)
-	{
-		int r;
-		for (r = 0; s && r < MAXROUTE && session[s].route[r].ip; r++)
+
+		if (session[s].ip)
 		{
-		    	int width = 32;
-			if (session[s].route[r].mask)
+			*p = 8;			// Framed-IP-Address
+			p[1] = 6;
+			*(uint32_t *) (p + 2) = htonl(session[s].ip);
+			p += p[1];
+		}
+
+		if (session[s].route[0].ip)
+		{
+			int r;
+			for (r = 0; s && r < MAXROUTE && session[s].route[r].ip; r++)
 			{
-			    int mask = session[s].route[r].mask;
-			    while (!(mask & 1))
-			    {
-				width--;
-				mask >>= 1;
-			    }
+				*p = 22;	// Framed-Route
+				p[1] = sprintf((char *) p + 2, "%s/%d %s 1",
+					fmtaddr(htonl(session[s].route[r].ip), 0),
+					session[s].route[r].prefixlen,
+					fmtaddr(htonl(session[s].ip), 1)) + 2;
+
+				p += p[1];
 			}
+		}
 
-			*p = 22;	// Framed-Route
-			p[1] = sprintf((char *) p + 2, "%s/%d %s 1",
-				fmtaddr(htonl(session[s].route[r].ip), 0),
-				width, fmtaddr(htonl(session[s].ip), 1)) + 2;
+		if (session[s].session_timeout)
+		{
+			*p = 27;		// Session-Timeout
+			p[1] = 6;
+			*(uint32_t *) (p + 2) = htonl(session[s].session_timeout);
+			p += p[1];
+		}
 
+		if (session[s].idle_timeout)
+		{
+			*p = 28;		// Idle-Timeout
+			p[1] = 6;
+			*(uint32_t *) (p + 2) = htonl(session[s].idle_timeout);
+			p += p[1];
+		}
+
+		if (*session[s].called)
+		{
+			*p = 30;                // called
+			p[1] = strlen(session[s].called) + 2;
+			strcpy((char *) p + 2, session[s].called);
+			p += p[1];
+		}
+
+		if (*session[s].calling)
+		{
+			*p = 31;                // calling
+			p[1] = strlen(session[s].calling) + 2;
+			strcpy((char *) p + 2, session[s].calling);
 			p += p[1];
 		}
 	}
-	if (*session[s].called)
-	{
-		*p = 30;                // called
-		p[1] = strlen(session[s].called) + 2;
-		strcpy((char *) p + 2, session[s].called);
-		p += p[1];
-	}
-	if (*session[s].calling)
-	{
-		*p = 31;                // calling
-		p[1] = strlen(session[s].calling) + 2;
-		strcpy((char *) p + 2, session[s].calling);
-		p += p[1];
-	}
+
 	// NAS-IP-Address
 	*p = 4;
 	p[1] = 6;
@@ -400,7 +464,7 @@ void radiussend(uint16_t r, uint8_t state)
 
 	// All AVpairs added
 	*(uint16_t *) (b + 2) = htons(p - b);
-	if (state != RADIUSAUTH)
+	if (state != RADIUSAUTH && state != RADIUSJUSTAUTH)
 	{
 		// Build auth for accounting packet
 		calc_auth(b, p - b, zero, b + 4);
@@ -413,7 +477,7 @@ void radiussend(uint16_t r, uint8_t state)
 		// get radius port
 		uint16_t port = config->radiusport[(radius[r].try - 1) % config->numradiusservers];
 		// assume RADIUS accounting port is the authentication port +1
-		addr.sin_port = htons((state == RADIUSAUTH) ? port : port+1);
+		addr.sin_port = htons((state == RADIUSAUTH || state == RADIUSJUSTAUTH) ? port : port+1);
 	}
 
 	LOG_HEX(5, "RADIUS Send", b, (p - b));
@@ -469,9 +533,11 @@ void processrad(uint8_t *buf, int len, char socket_index)
 	sessionidt s;
 	tunnelidt t = 0;
 	hasht hash;
-	uint8_t routes = 0;
+	int routes = 0;
+	int routes6 = 0;
 	int r_code;
 	int r_id;
+	int OpentunnelReq = 0;
 
 	CSTAT(processrad);
 
@@ -496,7 +562,7 @@ void processrad(uint8_t *buf, int len, char socket_index)
 		LOG(1, s, session[s].tunnel, "   Unexpected RADIUS response\n");
 		return;
 	}
-	if (radius[r].state != RADIUSAUTH && radius[r].state != RADIUSSTART
+	if (radius[r].state != RADIUSAUTH && radius[r].state != RADIUSJUSTAUTH && radius[r].state != RADIUSSTART
 	    && radius[r].state != RADIUSSTOP && radius[r].state != RADIUSINTERIM)
 	{
 		LOG(1, s, session[s].tunnel, "   Unexpected RADIUS response\n");
@@ -511,7 +577,7 @@ void processrad(uint8_t *buf, int len, char socket_index)
 			return; // Do nothing. On timeout, it will try the next radius server.
 		}
 
-		if ((radius[r].state == RADIUSAUTH && r_code != AccessAccept && r_code != AccessReject) ||
+		if (((radius[r].state == RADIUSAUTH ||radius[r].state == RADIUSJUSTAUTH) && r_code != AccessAccept && r_code != AccessReject) ||
 			((radius[r].state == RADIUSSTART || radius[r].state == RADIUSSTOP || radius[r].state == RADIUSINTERIM) && r_code != AccountingResponse))
 		{
 			LOG(1, s, session[s].tunnel, "   Unexpected RADIUS response %s\n", radius_code(r_code));
@@ -519,7 +585,7 @@ void processrad(uint8_t *buf, int len, char socket_index)
 				// care off finishing the radius session if that's really correct.
 		}
 
-		if (radius[r].state == RADIUSAUTH)
+		if (radius[r].state == RADIUSAUTH || radius[r].state == RADIUSJUSTAUTH)
 		{
 			// run post-auth plugin
 			struct param_post_auth packet = {
@@ -533,38 +599,6 @@ void processrad(uint8_t *buf, int len, char socket_index)
 			run_plugins(PLUGIN_POST_AUTH, &packet);
 			r_code = packet.auth_allowed ? AccessAccept : AccessReject;
 
-			// process auth response
-			if (radius[r].chap)
-			{
-				// CHAP
-				uint8_t *p = makeppp(b, sizeof(b), 0, 0, s, t, PPPCHAP);
-				if (!p) return;	// Abort!
-
-				*p = (r_code == AccessAccept) ? 3 : 4;     // ack/nak
-				p[1] = radius[r].id;
-				*(uint16_t *) (p + 2) = ntohs(4); // no message
-				tunnelsend(b, (p - b) + 4, t); // send it
-
-				LOG(3, s, session[s].tunnel, "   CHAP User %s authentication %s.\n", session[s].user,
-						(r_code == AccessAccept) ? "allowed" : "denied");
-			}
-			else
-			{
-				// PAP
-				uint8_t *p = makeppp(b, sizeof(b), 0, 0, s, t, PPPPAP);
-				if (!p) return;		// Abort!
-
-				// ack/nak
-				*p = r_code;
-				p[1] = radius[r].id;
-				*(uint16_t *) (p + 2) = ntohs(5);
-				p[4] = 0; // no message
-				tunnelsend(b, (p - b) + 5, t); // send it
-
-				LOG(3, s, session[s].tunnel, "   PAP User %s authentication %s.\n", session[s].user,
-						(r_code == AccessAccept) ? "allowed" : "denied");
-			}
-
 			if (r_code == AccessAccept)
 			{
 				// Login successful
@@ -576,6 +610,10 @@ void processrad(uint8_t *buf, int len, char socket_index)
 
 				uint8_t *p = buf + 20;
 				uint8_t *e = buf + len;
+				uint8_t tag;
+				uint8_t strtemp[256];
+				lac_reset_rad_tag_tunnel_ctxt();
+
 				for (; p + 2 <= e && p[1] && p + p[1] <= e; p += p[1])
 				{
 					if (*p == 26 && p[1] >= 7)
@@ -695,7 +733,7 @@ void processrad(uint8_t *buf, int len, char socket_index)
 					else if (*p == 22)
 					{
 						// Framed-Route
-						in_addr_t ip = 0, mask = 0;
+						in_addr_t ip = 0;
 						uint8_t u = 0;
 						uint8_t bits = 0;
 						uint8_t *n = p + 2;
@@ -717,14 +755,13 @@ void processrad(uint8_t *buf, int len, char socket_index)
 							n++;
 							while (n < e && isdigit(*n))
 								bits = bits * 10 + *n++ - '0';
-							mask = (( -1) << (32 - bits));
 						}
 						else if ((ip >> 24) < 128)
-							mask = 0xFF0000;
+							bits = 8;
 						else if ((ip >> 24) < 192)
-							mask = 0xFFFF0000;
+							bits = 16;
 						else
-							mask = 0xFFFFFF00;
+							bits = 24;
 
 						if (routes == MAXROUTE)
 						{
@@ -732,11 +769,11 @@ void processrad(uint8_t *buf, int len, char socket_index)
 						}
 						else if (ip)
 						{
-							LOG(3, s, session[s].tunnel, "   Radius reply contains route for %s/%s\n",
-								fmtaddr(htonl(ip), 0), fmtaddr(htonl(mask), 1));
+							LOG(3, s, session[s].tunnel, "   Radius reply contains route for %s/%d\n",
+								fmtaddr(htonl(ip), 0), bits);
 							
 							session[s].route[routes].ip = ip;
-							session[s].route[routes].mask = mask;
+							session[s].route[routes].prefixlen = bits;
 							routes++;
 						}
 					}
@@ -777,6 +814,22 @@ void processrad(uint8_t *buf, int len, char socket_index)
 							ip_filters[f].used++;
 						}
 					}
+					else if (*p == 27)
+					{
+					    	// Session-Timeout
+					    	if (p[1] < 6) continue;
+						session[s].session_timeout = ntohl(*(uint32_t *)(p + 2));
+						LOG(3, s, session[s].tunnel, "   Radius reply contains Session-Timeout = %u\n", session[s].session_timeout);
+						if(!session[s].session_timeout && config->kill_timedout_sessions)
+                                                        sessionshutdown(s, "Session timeout is zero", CDN_ADMIN_DISC, 0);
+					}
+					else if (*p == 28)
+					{
+					    	// Idle-Timeout
+					    	if (p[1] < 6) continue;
+						session[s].idle_timeout = ntohl(*(uint32_t *)(p + 2));
+						LOG(3, s, session[s].tunnel, "   Radius reply contains Idle-Timeout = %u\n", session[s].idle_timeout);
+					}
 					else if (*p == 99)
 					{
 						// Framed-IPv6-Route
@@ -784,7 +837,7 @@ void processrad(uint8_t *buf, int len, char socket_index)
 						int prefixlen;
 						uint8_t *n = p + 2;
 						uint8_t *e = p + p[1];
-						uint8_t *m = memchr(n, '/', e - p);
+						uint8_t *m = memchr(n, '/', e - n);
 
 						*m++ = 0;
 						inet_pton(AF_INET6, (char *) n, &r6);
@@ -796,12 +849,146 @@ void processrad(uint8_t *buf, int len, char socket_index)
 
 						if (prefixlen)
 						{
-							LOG(3, s, session[s].tunnel,
-								"   Radius reply contains route for %s/%d\n",
-								n, prefixlen);
-							session[s].ipv6route = r6;
-							session[s].ipv6prefixlen = prefixlen;
+							if (routes6 == MAXROUTE6)
+							{
+								LOG(1, s, session[s].tunnel, "   Too many IPv6 routes\n");
+							}
+							else
+							{
+								LOG(3, s, session[s].tunnel, "   Radius reply contains route for %s/%d\n", n, prefixlen);
+								session[s].route6[routes6].ipv6route = r6;
+								session[s].route6[routes6].ipv6prefixlen = prefixlen;
+								routes6++;
+							}
 						}
+					}
+					else if (*p == 123)
+					{
+						// Delegated-IPv6-Prefix
+						if ((p[1] > 4) && (p[3] > 0) && (p[3] <= 128))
+						{
+							char ipv6addr[INET6_ADDRSTRLEN];
+
+							if (routes6 == MAXROUTE6)
+							{
+								LOG(1, s, session[s].tunnel, "   Too many IPv6 routes\n");
+							}
+							else
+							{
+								memcpy(&session[s].route6[routes6].ipv6route, &p[4], p[1] - 4);
+								session[s].route6[routes6].ipv6prefixlen = p[3];
+								LOG(3, s, session[s].tunnel, "   Radius reply contains Delegated IPv6 Prefix %s/%d\n",
+									inet_ntop(AF_INET6, &session[s].route6[routes6].ipv6route, ipv6addr, INET6_ADDRSTRLEN), session[s].route6[routes6].ipv6prefixlen);
+								routes6++;
+							}
+						}
+					}
+					else if (*p == 168)
+					{
+						// Framed-IPv6-Address
+						if (p[1] == 18)
+						{
+							char ipv6addr[INET6_ADDRSTRLEN];
+							memcpy(&session[s].ipv6address, &p[2], 16);
+							LOG(3, s, session[s].tunnel, "   Radius reply contains Framed-IPv6-Address %s\n", inet_ntop(AF_INET6, &session[s].ipv6address, ipv6addr, INET6_ADDRSTRLEN));
+						}
+					}
+					else if (*p == 25)
+					{
+						// Class
+						if (p[1] < 3) continue;
+						session[s].classlen = p[1] - 2;
+						if (session[s].classlen > MAXCLASS)
+							session[s].classlen = MAXCLASS;
+						memcpy(session[s].class, p + 2, session[s].classlen);
+					}
+					else if (*p == 64)
+					{
+						// Tunnel-Type
+						if (p[1] != 6) continue;
+						tag = p[2];
+						LOG(3, s, session[s].tunnel, "   Radius reply Tunnel-Type:%d %d\n",
+							tag, ntohl(*(uint32_t *)(p + 2)) & 0xFFFFFF);
+						// Fill context
+						lac_set_rad_tag_tunnel_type(tag, ntohl(*(uint32_t *)(p + 2)) & 0xFFFFFF);
+						/* Request open tunnel to remote LNS*/
+						OpentunnelReq = 1;
+					}
+					else if (*p == 65)
+					{
+						// Tunnel-Medium-Type
+						if (p[1] < 6) continue;
+						tag = p[2];
+						LOG(3, s, session[s].tunnel, "   Radius reply Tunnel-Medium-Type:%d %d\n",
+							tag, ntohl(*(uint32_t *)(p + 2)) & 0xFFFFFF);
+						// Fill context
+						lac_set_rad_tag_tunnel_medium_type(tag, ntohl(*(uint32_t *)(p + 2)) & 0xFFFFFF);
+					}
+					else if (*p == 67)
+					{
+						// Tunnel-Server-Endpoint
+						if (p[1] < 3) continue;
+						tag = p[2];
+						//If the Tag field is greater than 0x1F,
+						// it SHOULD be interpreted as the first byte of the following String field.
+						memset(strtemp, 0, 256);
+						if (tag > 0x1F)
+						{
+							tag = 0;
+							memcpy(strtemp, (p + 2), p[1]-2);
+						}
+						else
+							memcpy(strtemp, (p + 3), p[1]-3);
+
+						LOG(3, s, session[s].tunnel, "   Radius reply Tunnel-Server-Endpoint:%d %s\n", tag, strtemp);
+						// Fill context
+						lac_set_rad_tag_tunnel_serv_endpt(tag, (char *) strtemp);
+					}
+					else if (*p == 69)
+					{
+						// Tunnel-Password
+						size_t lentemp;
+
+						if (p[1] < 5) continue;
+						tag = p[2];
+
+						memset(strtemp, 0, 256);
+						lentemp = p[1]-3;
+						memcpy(strtemp, (p + 3), lentemp);
+						if (!rad_tunnel_pwdecode(strtemp, &lentemp, config->radiussecret, radius[r].auth))
+						{
+							LOG_HEX(3, "Error Decode Tunnel-Password, Dump Radius reponse:", p, p[1]);
+							continue;
+						}
+
+						LOG(3, s, session[s].tunnel, "   Radius reply Tunnel-Password:%d %s\n", tag, strtemp);
+						if (strlen((char *) strtemp) > 63)
+						{
+							LOG(1, s, session[s].tunnel, "tunnel password is too long (>63)\n");
+							continue;
+						}
+						// Fill context
+						lac_set_rad_tag_tunnel_password(tag, (char *) strtemp);
+					}
+					else if (*p == 82)
+					{
+						// Tunnel-Assignment-Id
+						if (p[1] < 3) continue;
+						tag = p[2];
+						//If the Tag field is greater than 0x1F,
+						// it SHOULD be interpreted as the first byte of the following String field.
+						memset(strtemp, 0, 256);
+						if (tag > 0x1F)
+						{
+							tag = 0;
+							memcpy(strtemp, (p + 2), p[1]-2);
+						}
+						else
+							memcpy(strtemp, (p + 3), p[1]-3);
+
+						LOG(3, s, session[s].tunnel, "   Radius reply Tunnel-Assignment-Id:%d %s\n", tag, strtemp);
+						// Fill context
+						lac_set_rad_tag_tunnel_assignment_id(tag, (char *) strtemp);
 					}
 				}
 			}
@@ -810,6 +997,63 @@ void processrad(uint8_t *buf, int len, char socket_index)
 				LOG(2, s, session[s].tunnel, "   Authentication rejected for %s\n", session[s].user);
 				sessionkill(s, "Authentication rejected", TERM_ADMIN_RESET);
 				break;
+			}
+
+			if ((!config->disable_lac_func) && OpentunnelReq)
+			{
+				char assignment_id[256];
+				// Save radius tag context to conf
+				lac_save_rad_tag_tunnels(s);
+
+				memset(assignment_id, 0, 256);
+				if (!lac_rad_select_assignment_id(s, assignment_id))
+					break; // Error no assignment_id
+
+				LOG(3, s, session[s].tunnel, "Select Tunnel Remote LNS for assignment_id == %s\n", assignment_id);
+
+				if (lac_rad_forwardtoremotelns(s, assignment_id, session[s].user))
+				{
+					int ro;
+					// Sanity check, no local IP to session forwarded
+					session[s].ip = 0;
+					for (ro = 0; r < MAXROUTE && session[s].route[ro].ip; r++)
+					{
+						session[s].route[ro].ip = 0;
+					}
+					break;
+				}
+			}
+
+			// process auth response
+			if (radius[r].chap)
+			{
+				// CHAP
+				uint8_t *p = makeppp(b, sizeof(b), 0, 0, s, t, PPPCHAP, 0, 0, 0);
+				if (!p) return;	// Abort!
+
+				*p = (r_code == AccessAccept) ? 3 : 4;     // ack/nak
+				p[1] = radius[r].id;
+				*(uint16_t *) (p + 2) = ntohs(4); // no message
+				tunnelsend(b, (p - b) + 4, t); // send it
+
+				LOG(3, s, session[s].tunnel, "   CHAP User %s authentication %s.\n", session[s].user,
+						(r_code == AccessAccept) ? "allowed" : "denied");
+			}
+			else
+			{
+				// PAP
+				uint8_t *p = makeppp(b, sizeof(b), 0, 0, s, t, PPPPAP, 0, 0, 0);
+				if (!p) return;		// Abort!
+
+				// ack/nak
+				*p = r_code;
+				p[1] = radius[r].id;
+				*(uint16_t *) (p + 2) = ntohs(5);
+				p[4] = 0; // no message
+				tunnelsend(b, (p - b) + 5, t); // send it
+
+				LOG(3, s, session[s].tunnel, "   PAP User %s authentication %s.\n", session[s].user,
+						(r_code == AccessAccept) ? "allowed" : "denied");
 			}
 
 			if (!session[s].dns1 && config->default_dns1)
@@ -855,6 +1099,7 @@ void radiusretry(uint16_t r)
 			sendchap(s, t);
 			break;
 		case RADIUSAUTH:	// sending auth to RADIUS server
+		case RADIUSJUSTAUTH:	// sending auth to RADIUS server
 		case RADIUSSTART:	// sending start accounting to RADIUS server
 		case RADIUSSTOP:	// sending stop accounting to RADIUS server
 		case RADIUSINTERIM:	// sending interim accounting to RADIUS server
@@ -1153,3 +1398,94 @@ void processdae(uint8_t *buf, int len, struct sockaddr_in *addr, int alen, struc
 	if (sendtofrom(daefd, buf, len, MSG_DONTWAIT | MSG_NOSIGNAL, (struct sockaddr *) addr, alen, local) < 0)
 		LOG(0, 0, 0, "Error sending DAE response packet: %s\n", strerror(errno));
 }
+
+// Decrypte the encrypted Tunnel Password.
+// Defined in RFC-2868.
+// the pl2tpsecret buffer must set to 256 characters.
+// return 0 on decoding error else length of decoded l2tpsecret
+int rad_tunnel_pwdecode(uint8_t *pl2tpsecret, size_t *pl2tpsecretlen,
+						const char *radiussecret, const uint8_t * auth)
+{
+	MD5_CTX ctx, oldctx;
+	hasht hash;
+	int secretlen;
+	unsigned i, n, len, decodedlen;
+
+/* 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 6 7
+* +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |     Salt      |     Salt      |   String ..........
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+*/
+
+	len = *pl2tpsecretlen;
+
+	if (len < 2)
+	{
+		LOG(1, 0, 0, "tunnel password is too short, We need at least a salt\n");
+		return 0;
+	}
+
+	if (len <= 3)
+	{
+		pl2tpsecret[0] = 0;
+		*pl2tpsecretlen = 0;
+		LOG(1, 0, 0, "tunnel passwd is empty !!!\n");
+		return 0;
+	}
+
+	len -= 2;	/* discount the salt */
+
+	//Use the secret to setup the decryption
+	secretlen = strlen(radiussecret);
+
+	MD5_Init(&ctx);
+	MD5_Update(&ctx, (void *) radiussecret, secretlen);
+	oldctx = ctx;	/* save intermediate work */
+
+	// Set up the initial key:
+	//	b(1) = MD5(radiussecret + auth + salt)
+	MD5_Update(&ctx, (void *) auth, 16);
+	MD5_Update(&ctx, pl2tpsecret, 2);
+
+	decodedlen = 0;
+	for (n = 0; n < len; n += 16)
+	{
+		int base = 0;
+
+		if (n == 0)
+		{
+			MD5_Final(hash, &ctx);
+
+			ctx = oldctx;
+
+			 // the first octet, it's the 'data_len'
+			 // Check is correct
+			decodedlen = pl2tpsecret[2] ^ hash[0];
+			if (decodedlen >= len)
+			{
+				LOG(1, 0, 0, "tunnel password is too long !!!\n");
+				return 0;
+			}
+
+			MD5_Update(&ctx, pl2tpsecret + 2, 16);
+			base = 1;
+		} else
+		{
+			MD5_Final(hash, &ctx);
+
+			ctx = oldctx;
+			MD5_Update(&ctx, pl2tpsecret + n + 2, 16);
+		}
+
+		for (i = base; i < 16; i++)
+		{
+			pl2tpsecret[n + i - 1] = pl2tpsecret[n + i + 2] ^ hash[i];
+		}
+	}
+
+	if (decodedlen > 239) decodedlen = 239;
+
+	*pl2tpsecretlen = decodedlen;
+	pl2tpsecret[decodedlen] = 0;
+
+	return decodedlen;
+};

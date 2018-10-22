@@ -1,5 +1,5 @@
 // L2TPNS Clustering Stuff
-// $Id: cluster.h,v 1.14 2005/07/31 10:04:10 bodea Exp $
+// $Id: cluster.h,v 1.16 2006-12-04 20:54:51 bodea Exp $
 
 #ifndef __CLUSTER_H__
 #define __CLUSTER_H__
@@ -21,8 +21,12 @@
 #define C_GARDEN		14	// Gardened packet
 #define C_MASTER		15	// Tell a slave the address of the master.
 #define C_FORWARD_DAE		16	// A DAE packet for the master to handle
+#define C_BUNDLE		17	// Bundle structure.
+#define C_CBUNDLE		18	// Compressed bundle structure.
+#define C_MPPP_FORWARD	19	// MPPP Forwarded packet..
+#define C_PPPOE_FORWARD	20	// PPPOE Forwarded packet..
 
-#define HB_VERSION		7	// Protocol version number..
+#define HB_VERSION		9	// Protocol version number..
 #define HB_MAX_SEQ		(1<<30)	// Maximum sequence number. (MUST BE A POWER OF 2!)
 #define HB_HISTORY_SIZE		64	// How many old heartbeats we remember?? (Must be a factor of HB_MAX_SEQ)
 
@@ -43,16 +47,18 @@ typedef struct {
 
 	uint32_t highsession;	// Id of the highest in-use session.
 	uint32_t freesession;	// Id of the first free session.
+	uint32_t highbundle;	// Id of the highest used bundle.
 	uint32_t hightunnel;	// Id of the highest used tunnel.
 	uint32_t size_sess;	// Size of the session structure.
 
+	uint32_t size_bund;	// size of the bundle structure.
 	uint32_t size_tunn;	// size of the tunnel structure.
 	uint32_t interval;	// ping/heartbeat interval
 	uint32_t timeout;	// heartbeat timeout
 
 	uint64_t table_version;	// # state changes processed by cluster
 
-	char reserved[128 - 13*sizeof(uint32_t)];	// Pad out to 128 bytes.
+	char reserved[128 - 13*sizeof(uint32_t) - sizeof(uint64_t)];	// Pad out to 128 bytes.
 } heartt;
 
 typedef struct {		/* Used to update byte counters on the */
@@ -74,16 +80,19 @@ typedef struct {
 int cluster_init(void);
 int processcluster(uint8_t *buf, int size, in_addr_t addr);
 int cluster_send_session(int sid);
+int cluster_send_bundle(int bid);
 int cluster_send_tunnel(int tid);
-int master_forward_packet(uint8_t *data, int size, in_addr_t addr, int port);
+int master_forward_packet(uint8_t *data, int size, in_addr_t addr, uint16_t port, uint16_t indexudp);
 int master_forward_dae_packet(uint8_t *data, int size, in_addr_t addr, int port);
 int master_throttle_packet(int tid, uint8_t *data, int size);
 int master_garden_packet(sessionidt s, uint8_t *data, int size);
+int master_forward_mppp_packet(sessionidt s, uint8_t *data, int size);
 void master_update_counts(void);
 void cluster_send_ping(time_t basetime);
 void cluster_heartbeat(void);
 void cluster_check_master(void);
 void cluster_check_slaves(void);
-int cmd_show_cluster(struct cli_def *cli, char *command, char **argv, int argc);
+int cmd_show_cluster(struct cli_def *cli, const char *command, char **argv, int argc);
+int master_forward_pppoe_packet(uint8_t *data, int size, uint8_t codepad);
 
 #endif /* __CLUSTER_H__ */

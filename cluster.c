@@ -1,7 +1,5 @@
 // L2TPNS Clustering Stuff
 
-char const *cvs_id_cluster = "$Id: cluster.c,v 1.50.2.1 2006/12/02 14:09:14 bodea Exp $";
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -19,10 +17,12 @@ char const *cvs_id_cluster = "$Id: cluster.c,v 1.50.2.1 2006/12/02 14:09:14 bode
 #include <errno.h>
 #include <libcli.h>
 
+#include "dhcp6.h"
 #include "l2tpns.h"
 #include "cluster.h"
 #include "util.h"
 #include "tbf.h"
+#include "pppoe.h"
 
 #ifdef BGP
 #include "bgp.h"
@@ -42,6 +42,7 @@ extern int cluster_sockfd;		// The filedescriptor for the cluster communications
 
 in_addr_t my_address = 0;		// The network address of my ethernet port.
 static int walk_session_number = 0;	// The next session to send when doing the slow table walk.
+static int walk_bundle_number = 0;	// The next bundle to send when doing the slow table walk.
 static int walk_tunnel_number = 0;	// The next tunnel to send when doing the slow table walk.
 int forked = 0;				// Sanity check: CLI must not diddle with heartbeat table
 
@@ -85,7 +86,8 @@ int cluster_init()
 	int opt;
 
 	config->cluster_undefined_sessions = MAXSESSION-1;
-	config->cluster_undefined_tunnels = config->max_tunnels-1;
+	config->cluster_undefined_bundles = MAXBUNDLE-1;
+	config->cluster_undefined_tunnels = MAXTUNNEL-1;
 
 	if (!config->cluster_address)
 		return 0;
@@ -96,7 +98,7 @@ int cluster_init()
 
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
-	addr.sin_port = htons(CLUSTERPORT);
+	addr.sin_port = htons(config->cluster_port);
 	addr.sin_addr.s_addr = INADDR_ANY;
 	setsockopt(cluster_sockfd, SOL_SOCKET, SO_REUSEADDR, &addr, sizeof(addr));
 
@@ -168,7 +170,7 @@ static int cluster_send_data(void *data, int datalen)
 	if (!config->cluster_address) return 0;
 
 	addr.sin_addr.s_addr = config->cluster_address;
-	addr.sin_port = htons(CLUSTERPORT);
+	addr.sin_port = htons(config->cluster_port);
 	addr.sin_family = AF_INET;
 
 	LOG(5, 0, 0, "Cluster send data: %d bytes\n", datalen);
@@ -227,7 +229,7 @@ static void cluster_uptodate(void)
 	if (config->cluster_iam_uptodate)
 		return;
 
-	if (config->cluster_undefined_sessions || config->cluster_undefined_tunnels)
+	if (config->cluster_undefined_sessions || config->cluster_undefined_tunnels || config->cluster_undefined_bundles)
 		return;
 
 	config->cluster_iam_uptodate = 1;
@@ -251,7 +253,7 @@ static int peer_send_data(in_addr_t peer, uint8_t *data, int size)
 		return -1;
 
 	addr.sin_addr.s_addr = peer;
-	addr.sin_port = htons(CLUSTERPORT);
+	addr.sin_port = htons(config->cluster_port);
 	addr.sin_family = AF_INET;
 
 	LOG_HEX(5, "Peer send", data, size);
@@ -303,10 +305,40 @@ static int _forward_packet(uint8_t *data, int size, in_addr_t addr, int port, in
 //
 // The master just processes the payload as if it had
 // received it off the tun device.
-//
-int master_forward_packet(uint8_t *data, int size, in_addr_t addr, int port)
+//(note: THIS ROUTINE WRITES TO pack[-6]).
+int master_forward_packet(uint8_t *data, int size, in_addr_t addr, uint16_t port, uint16_t indexudp)
 {
-	return _forward_packet(data, size, addr, port, C_FORWARD);
+	uint8_t *p = data - (3 * sizeof(uint32_t));
+	uint8_t *psave = p;
+	uint32_t indexandport = port | ((indexudp << 16) & 0xFFFF0000);
+
+	if (!config->cluster_master_address) // No election has been held yet. Just skip it.
+		return -1;
+
+	LOG(4, 0, 0, "Forwarding packet from %s to master (size %d)\n", fmtaddr(addr, 0), size);
+
+	STAT(c_forwarded);
+	add_type(&p, C_FORWARD, addr, (uint8_t *) &indexandport, sizeof(indexandport));
+
+	return peer_send_data(config->cluster_master_address, psave, size + (3 * sizeof(uint32_t)));
+}
+
+// Forward PPPOE packet to the master.
+//(note: THIS ROUTINE WRITES TO pack[-4]).
+int master_forward_pppoe_packet(uint8_t *data, int size, uint8_t codepad)
+{
+	uint8_t *p = data - (2 * sizeof(uint32_t));
+	uint8_t *psave = p;
+
+	if (!config->cluster_master_address) // No election has been held yet. Just skip it.
+		return -1;
+
+	LOG(4, 0, 0, "Forward PPPOE packet to master, code %s (size %d)\n", get_string_codepad(codepad), size);
+
+	STAT(c_forwarded);
+	add_type(&p, C_PPPOE_FORWARD, codepad, NULL, 0);
+
+	return peer_send_data(config->cluster_master_address, psave, size + (2 * sizeof(uint32_t)));
 }
 
 // Forward a DAE RADIUS packet to the master.
@@ -364,6 +396,28 @@ int master_garden_packet(sessionidt s, uint8_t *data, int size)
 }
 
 //
+// Forward a MPPP packet to the master for handling.
+//
+// (Note that this must be called with the tun header
+// as the start of the data).
+// (i.e. this routine writes to data[-8]).
+int master_forward_mppp_packet(sessionidt s, uint8_t *data, int size)
+{
+	uint8_t *p = data - (2 * sizeof(uint32_t));
+	uint8_t *psave = p;
+
+	if (!config->cluster_master_address) // No election has been held yet. Just skip it.
+		return -1;
+
+	LOG(4, 0, 0, "Forward MPPP packet to master (size %d)\n", size);
+
+	add_type(&p, C_MPPP_FORWARD, s, NULL, 0);
+
+	return peer_send_data(config->cluster_master_address, psave, size + (2 * sizeof(uint32_t)));
+
+}
+
+//
 // Send a chunk of data as a heartbeat..
 // We save it in the history buffer as we do so.
 //
@@ -400,7 +454,7 @@ void cluster_send_ping(time_t basetime)
 
 	x.ver = 1;
 	x.addr = config->bind_address;
-	x.undef = config->cluster_undefined_sessions + config->cluster_undefined_tunnels;
+	x.undef = config->cluster_undefined_sessions + config->cluster_undefined_tunnels + config->cluster_undefined_bundles;
 	x.basetime = basetime;
 
 	add_type(&p, C_PING, basetime, (uint8_t *) &x, sizeof(x));
@@ -424,12 +478,6 @@ void master_update_counts(void)
 		return;
 
 	if (!config->cluster_master_address)	// If we don't have a master, skip it for a while.
-		return;
-
-	// C_BYTES format changed in 2.1.0 (cluster version 5)
-	// during upgrade from previous versions, hang onto our counters
-	// for a bit until the new master comes up
-	if (config->cluster_last_hb_ver < 5)
 		return;
 
 	i = MAX_B_RECS * 5; // Examine max 3000 sessions;
@@ -520,7 +568,7 @@ void cluster_check_slaves(void)
 //
 void cluster_check_master(void)
 {
-	int i, count, tcount, high_unique_id = 0;
+	int i, count, high_unique_id = 0;
 	int last_free = 0;
 	clockt t = TIME;
 	static int probed = 0;
@@ -599,6 +647,7 @@ void cluster_check_master(void)
 		// to become a master!!!
 
 	config->cluster_iam_master = 1;
+	pppoe_send_garp(); // gratuitous arp of the pppoe interface
 
 	LOG(0, 0, 0, "I am declaring myself the master!\n");
 
@@ -615,13 +664,26 @@ void cluster_check_master(void)
 		// Count the highest used tunnel number as well.
 		//
 	config->cluster_highest_tunnelid = 0;
-	for (i = 0, tcount = 0; i < config->max_tunnels; ++i) {
+	for (i = 0; i < MAXTUNNEL; ++i) {
 		if (tunnel[i].state == TUNNELUNDEF)
 			tunnel[i].state = TUNNELFREE;
 
 		if (tunnel[i].state != TUNNELFREE && i > config->cluster_highest_tunnelid)
 			config->cluster_highest_tunnelid = i;
 	}
+
+		//
+                // Go through and mark all the bundles as defined.
+                // Count the highest used bundle number as well.
+                //
+        config->cluster_highest_bundleid = 0;
+        for (i = 0; i < MAXBUNDLE; ++i) {
+                if (bundle[i].state == BUNDLEUNDEF)
+                        bundle[i].state = BUNDLEFREE;
+
+                if (bundle[i].state != BUNDLEFREE && i > config->cluster_highest_bundleid)
+                        config->cluster_highest_bundleid = i;
+        }
 
 		//
 		// Go through and mark all the sessions as being defined.
@@ -648,7 +710,7 @@ void cluster_check_master(void)
 		}
 
 			// Reset idle timeouts..
-		session[i].last_packet = time_now;
+		session[i].last_packet = session[i].last_data = time_now;
 
 			// Reset die relative to our uptime rather than the old master's
 		if (session[i].die) session[i].die = TIME;
@@ -694,10 +756,11 @@ void cluster_check_master(void)
 	rebuild_address_pool();
 
 		// If we're not the very first master, this is a big issue!
-	if(count>0)
+	if (count > 0)
 		LOG(0, 0, 0, "Warning: Fixed %d uninitialized sessions in becoming master!\n", count);
 
 	config->cluster_undefined_sessions = 0;
+	config->cluster_undefined_bundles = 0;
 	config->cluster_undefined_tunnels = 0;
 	config->cluster_iam_uptodate = 1; // assume all peers are up-to-date
 
@@ -719,7 +782,7 @@ void cluster_check_master(void)
 // we fix it up here, and we ensure that the 'first free session'
 // pointer is valid.
 //
-static void cluster_check_sessions(int highsession, int freesession_ptr, int hightunnel)
+static void cluster_check_sessions(int highsession, int freesession_ptr, int highbundle, int hightunnel)
 {
 	int i;
 
@@ -728,7 +791,7 @@ static void cluster_check_sessions(int highsession, int freesession_ptr, int hig
 	if (config->cluster_iam_uptodate)
 		return;
 
-	if (highsession > config->cluster_undefined_sessions && hightunnel > config->cluster_undefined_tunnels)
+	if (highsession > config->cluster_undefined_sessions && highbundle > config->cluster_undefined_bundles && hightunnel > config->cluster_undefined_tunnels)
 		return;
 
 		// Clear out defined sessions, counting the number of
@@ -742,6 +805,19 @@ static void cluster_check_sessions(int highsession, int freesession_ptr, int hig
 
 		if (session[i].tunnel == T_UNDEF)
 			++config->cluster_undefined_sessions;
+	}
+
+		// Clear out defined bundles, counting the number of
+		// undefs remaining.
+	config->cluster_undefined_bundles = 0;
+	for (i = 1 ; i < MAXBUNDLE; ++i) {
+		if (i > highbundle) {
+			if (bundle[i].state == BUNDLEUNDEF) bundle[i].state = BUNDLEFREE; // Defined.
+			continue;
+		}
+
+		if (bundle[i].state == BUNDLEUNDEF)
+			++config->cluster_undefined_bundles;
 	}
 
 		// Clear out defined tunnels, counting the number of
@@ -758,9 +834,9 @@ static void cluster_check_sessions(int highsession, int freesession_ptr, int hig
 	}
 
 
-	if (config->cluster_undefined_sessions || config->cluster_undefined_tunnels) {
-		LOG(2, 0, 0, "Cleared undefined sessions/tunnels. %d sess (high %d), %d tunn (high %d)\n",
-			config->cluster_undefined_sessions, highsession, config->cluster_undefined_tunnels, hightunnel);
+	if (config->cluster_undefined_sessions || config->cluster_undefined_tunnels || config->cluster_undefined_bundles) {
+		LOG(2, 0, 0, "Cleared undefined sessions/bundles/tunnels. %d sess (high %d), %d bund (high %d), %d tunn (high %d)\n",
+			config->cluster_undefined_sessions, highsession, config->cluster_undefined_bundles, highbundle, config->cluster_undefined_tunnels, hightunnel);
 		return;
 	}
 
@@ -790,7 +866,28 @@ static int hb_add_type(uint8_t **p, int type, int id)
 			// Failed to compress : Fall through.
 		}
 		case C_SESSION:
-		    	add_type(p, C_SESSION, id, (uint8_t *) &session[id], sizeof(sessiont));
+			add_type(p, C_SESSION, id, (uint8_t *) &session[id], sizeof(sessiont));
+			break;
+
+		case C_CBUNDLE: { // Compressed C_BUNDLE
+                        uint8_t c[sizeof(bundlet) * 2]; // Bigger than worst case.
+                        uint8_t *d = (uint8_t *) &bundle[id];
+                        uint8_t *orig = d;
+                        int size;
+
+                        size = rle_compress( &d,  sizeof(bundlet), c, sizeof(c) );
+
+                                // Did we compress the full structure, and is the size actually
+                                // reduced??
+                        if ( (d - orig) == sizeof(bundlet) && size < sizeof(bundlet) ) {
+                                add_type(p, C_CBUNDLE, id, c, size);
+                                break;
+                        }
+                        // Failed to compress : Fall through.
+                }
+
+		case C_BUNDLE:
+		    	add_type(p, C_BUNDLE, id, (uint8_t *) &bundle[id], sizeof(bundlet));
 			break;
 
 		case C_CTUNNEL: { // Compressed C_TUNNEL
@@ -810,7 +907,7 @@ static int hb_add_type(uint8_t **p, int type, int id)
 			// Failed to compress : Fall through.
 		}
 		case C_TUNNEL:
-		    	add_type(p, C_TUNNEL, id, (uint8_t *) &tunnel[id], sizeof(tunnelt));
+			add_type(p, C_TUNNEL, id, (uint8_t *) &tunnel[id], sizeof(tunnelt));
 			break;
 		default:
 			LOG(0, 0, 0, "Found an invalid type in heart queue! (%d)\n", type);
@@ -825,7 +922,7 @@ static int hb_add_type(uint8_t **p, int type, int id)
 //
 void cluster_heartbeat()
 {
-	int i, count = 0, tcount = 0;
+	int i, count = 0, tcount = 0, bcount = 0;
 	uint8_t buff[MAX_HEART_SIZE + sizeof(heartt) + sizeof(int) ];
 	heartt h;
 	uint8_t *p = buff;
@@ -846,7 +943,9 @@ void cluster_heartbeat()
 	h.highsession = config->cluster_highest_sessionid;
 	h.freesession = sessionfree;
 	h.hightunnel = config->cluster_highest_tunnelid;
+	h.highbundle = config->cluster_highest_bundleid;
 	h.size_sess = sizeof(sessiont);		// Just in case.
+	h.size_bund = sizeof(bundlet);
 	h.size_tunn = sizeof(tunnelt);
 	h.interval = config->cluster_hb_interval;
 	h.timeout  = config->cluster_hb_timeout;
@@ -902,6 +1001,21 @@ void cluster_heartbeat()
 	}
 
 		//
+		// Fill out the packet with bundles from the bundle table...
+	while ( (p + sizeof(uint32_t) * 2 + sizeof(bundlet) ) < (buff + MAX_HEART_SIZE) ) {
+
+		if (!walk_bundle_number)        // bundle #0 isn't valid.
+			++walk_bundle_number;
+
+		if (bcount >= config->cluster_highest_bundleid)
+			break;
+
+		hb_add_type(&p, C_CBUNDLE, walk_bundle_number);
+		walk_bundle_number = (1+walk_bundle_number)%(config->cluster_highest_bundleid+1);	// +1 avoids divide by zero.
+		++bcount;
+        }
+
+		//
 		// Did we do something wrong?
 	if (p > (buff + sizeof(buff))) {	// Did we somehow manage to overun the buffer?
 		LOG(0, 0, 0, "Overran the heartbeat buffer now! This is fatal. Exiting. (size %d)\n", (int) (p - buff));
@@ -909,10 +1023,10 @@ void cluster_heartbeat()
 		exit(1);
 	}
 
-	LOG(6, 0, 0, "Sending v%d heartbeat #%d, change #%" PRIu64 " with %d changes "
-		     "(%d x-sess, %d x-tunnels, %d highsess, %d hightun, size %d)\n",
+	LOG(4, 0, 0, "Sending v%d heartbeat #%d, change #%" PRIu64 " with %d changes "
+		     "(%d x-sess, %d x-bundles, %d x-tunnels, %d highsess, %d highbund, %d hightun, size %d)\n",
 	    HB_VERSION, h.seq, h.table_version, config->cluster_num_changes,
-	    count, tcount, config->cluster_highest_sessionid,
+	    count, bcount, tcount, config->cluster_highest_sessionid, config->cluster_highest_bundleid,
 	    config->cluster_highest_tunnelid, (int) (p - buff));
 
 	config->cluster_num_changes = 0;
@@ -930,12 +1044,20 @@ static int type_changed(int type, int id)
 	int i;
 
 	for (i = 0 ; i < config->cluster_num_changes ; ++i)
-		if ( cluster_changes[i].id == id &&
-			cluster_changes[i].type == type)
-			return 0;	// Already marked for change.
+	{
+		if ( cluster_changes[i].id == id && cluster_changes[i].type == type)
+		{
+			// Already marked for change, remove it
+			--config->cluster_num_changes;
+			memmove(&cluster_changes[i],
+					&cluster_changes[i+1],
+					(config->cluster_num_changes - i) * sizeof(cluster_changes[i]));
+			break;
+		}
+	}
 
-	cluster_changes[i].type = type;
-	cluster_changes[i].id = id;
+	cluster_changes[config->cluster_num_changes].type = type;
+	cluster_changes[config->cluster_num_changes].id = id;
 	++config->cluster_num_changes;
 
 	if (config->cluster_num_changes > MAX_CHANGES)
@@ -943,7 +1065,6 @@ static int type_changed(int type, int id)
 
 	return 1;
 }
-
 
 // A particular session has been changed!
 int cluster_send_session(int sid)
@@ -959,6 +1080,17 @@ int cluster_send_session(int sid)
 	}
 
 	return type_changed(C_CSESSION, sid);
+}
+
+// A particular bundle has been changed!
+int cluster_send_bundle(int bid)
+{
+	if (!config->cluster_iam_master) {
+		LOG(0, 0, bid, "I'm not a master, but I just tried to change a bundle!\n");
+		return -1;
+	}
+
+	return type_changed(C_CBUNDLE, bid);
 }
 
 // A particular tunnel has been changed!
@@ -1158,7 +1290,9 @@ static int cluster_handle_bytes(uint8_t *data, int size)
 		session[b->sid].cout_delta += b->cout;
 
 		if (b->cin)
-			session[b->sid].last_packet = time_now; // Reset idle timer!
+			session[b->sid].last_packet = session[b->sid].last_data = time_now;
+		else if (b->cout)
+			session[b->sid].last_data = time_now;
 
 		size -= sizeof(*b);
 		++b;
@@ -1198,6 +1332,31 @@ static int cluster_recv_session(int more, uint8_t *p)
 	return 0;
 }
 
+static int cluster_recv_bundle(int more, uint8_t *p)
+{
+	if (more >= MAXBUNDLE) {
+		LOG(0, 0, 0, "DANGER: Received a bundle id > MAXBUNDLE!\n");
+		return -1;
+	}
+
+	if (bundle[more].state == BUNDLEUNDEF) {
+		if (config->cluster_iam_uptodate) { // Sanity.
+			LOG(0, 0, 0, "I thought I was uptodate but I just found an undefined bundle!\n");
+		} else {
+			--config->cluster_undefined_bundles;
+		}
+	}
+
+	memcpy(&bundle[more], p, sizeof(bundle[more]) );
+
+	LOG(5, 0, more, "Received bundle update\n");
+
+	if (!config->cluster_iam_uptodate)
+		cluster_uptodate();     // Check to see if we're up to date.
+
+        return 0;
+}
+
 static int cluster_recv_tunnel(int more, uint8_t *p)
 {
 	if (more >= config->max_tunnels) {
@@ -1231,54 +1390,184 @@ static int cluster_recv_tunnel(int more, uint8_t *p)
 }
 
 
-// pre v5 heartbeat session structure
+// pre v6 heartbeat session structure
 struct oldsession {
 	sessionidt next;
 	sessionidt far;
 	tunnelidt tunnel;
+	uint8_t flags;
+	struct {
+		uint8_t phase;
+		uint8_t lcp:4;
+		uint8_t ipcp:4;
+		uint8_t ipv6cp:4;
+		uint8_t ccp:4;
+	} ppp;
+	char reserved_1[2];
 	in_addr_t ip;
 	int ip_pool_index;
-	unsigned long unique_id;
-	uint16_t nr;
-	uint16_t ns;
+	uint32_t unique_id;
+	char reserved_2[4];
 	uint32_t magic;
-	uint32_t cin, cout;
 	uint32_t pin, pout;
-	uint32_t total_cin;
-	uint32_t total_cout;
-	uint32_t id;
+	uint32_t cin, cout;
+	uint32_t cin_wrap, cout_wrap;
+	uint32_t cin_delta, cout_delta;
 	uint16_t throttle_in;
 	uint16_t throttle_out;
+	uint8_t filter_in;
+	uint8_t filter_out;
+	uint16_t mru;
 	clockt opened;
 	clockt die;
+	uint32_t session_timeout;
+	uint32_t idle_timeout;
 	time_t last_packet;
+	time_t last_data;
 	in_addr_t dns1, dns2;
 	routet route[MAXROUTE];
-	uint16_t radius;
-	uint16_t mru;
 	uint16_t tbf_in;
 	uint16_t tbf_out;
-	uint8_t l2tp_flags;
-	uint8_t reserved_old_snoop;
-	uint8_t walled_garden;
-	uint8_t flags1;
-	char random_vector[MAXTEL];
 	int random_vector_length;
-	char user[129];
+	uint8_t random_vector[MAXTEL];
+	char user[MAXUSER];
 	char called[MAXTEL];
 	char calling[MAXTEL];
 	uint32_t tx_connect_speed;
 	uint32_t rx_connect_speed;
-	uint32_t flags;
-#define SF_IPCP_ACKED	1	// Has this session seen an IPCP Ack?
-#define SF_LCP_ACKED	2	// LCP negotiated
-#define SF_CCP_ACKED	4	// CCP negotiated
+	clockt timeout;
+	uint32_t mrru;
+	uint8_t mssf;
+	epdist epdis;
+	bundleidt bundle;
 	in_addr_t snoop_ip;
 	uint16_t snoop_port;
-	uint16_t sid;
-	uint8_t filter_in;
-	uint8_t filter_out;
-	char reserved[18];
+	uint8_t walled_garden;
+	uint8_t ipv6prefixlen;
+	struct in6_addr ipv6route;
+	char reserved_3[11];
+};
+
+struct oldsessionV7 {
+	sessionidt next;		// next session in linked list
+	sessionidt far;			// far end session ID
+	tunnelidt tunnel;		// near end tunnel ID
+	uint8_t flags;			// session flags: see SESSION_*
+	struct {
+		uint8_t phase;		// PPP phase
+		uint8_t lcp:4;		//   LCP    state
+		uint8_t ipcp:4;		//   IPCP   state
+		uint8_t ipv6cp:4;	//   IPV6CP state
+		uint8_t ccp:4;		//   CCP    state
+	} ppp;
+	uint16_t mru;			// maximum receive unit
+	in_addr_t ip;			// IP of session set by RADIUS response (host byte order).
+	int ip_pool_index;		// index to IP pool
+	uint32_t unique_id;		// unique session id
+	uint32_t magic;			// ppp magic number
+	uint32_t pin, pout;		// packet counts
+	uint32_t cin, cout;		// byte counts
+	uint32_t cin_wrap, cout_wrap;	// byte counter wrap count (RADIUS accounting giagawords)
+	uint32_t cin_delta, cout_delta;	// byte count changes (for dump_session())
+	uint16_t throttle_in;		// upstream throttle rate (kbps)
+	uint16_t throttle_out;		// downstream throttle rate
+	uint8_t filter_in;		// input filter index (to ip_filters[N-1]; 0 if none)
+	uint8_t filter_out;		// output filter index
+	uint16_t snoop_port;		// Interception destination port
+	in_addr_t snoop_ip;		// Interception destination IP
+	clockt opened;			// when started
+	clockt die;			// being closed, when to finally free
+	uint32_t session_timeout;	// Maximum session time in seconds
+	uint32_t idle_timeout;		// Maximum idle time in seconds
+	time_t last_packet;		// Last packet from the user (used for idle timeouts)
+	time_t last_data;		// Last data packet to/from the user (used for idle timeouts)
+	in_addr_t dns1, dns2;		// DNS servers
+	routet route[MAXROUTE];		// static routes
+	uint16_t tbf_in;		// filter bucket for throttling in from the user.
+	uint16_t tbf_out;		// filter bucket for throttling out to the user.
+	int random_vector_length;
+	uint8_t random_vector[MAXTEL];
+	char user[MAXUSER];		// user (needed in session for radius stop messages)
+	char called[MAXTEL];		// called number
+	char calling[MAXTEL];		// calling number
+	uint32_t tx_connect_speed;
+	uint32_t rx_connect_speed;
+	clockt timeout;                 // Session timeout
+	uint32_t mrru;                  // Multilink Max-Receive-Reconstructed-Unit
+	epdist epdis;                   // Multilink Endpoint Discriminator
+	bundleidt bundle;               // Multilink Bundle Identifier
+	uint8_t mssf;                   // Multilink Short Sequence Number Header Format
+	uint8_t walled_garden;		// is this session gardened?
+	uint8_t classlen;		// class (needed for radius accounting messages)
+	char class[MAXCLASS];
+	uint8_t ipv6prefixlen;		// IPv6 route prefix length
+	struct in6_addr ipv6route;	// Static IPv6 route
+	sessionidt forwardtosession;	// LNS id_session to forward
+	uint8_t src_hwaddr[ETH_ALEN];	// MAC addr source (for pppoe sessions 6 bytes)
+	char reserved[4];		// Space to expand structure without changing HB_VERSION
+};
+
+struct oldsessionV8 {
+	sessionidt next;		// next session in linked list
+	sessionidt far;			// far end session ID
+	tunnelidt tunnel;		// near end tunnel ID
+	uint8_t flags;			// session flags: see SESSION_*
+	struct {
+		uint8_t phase;		// PPP phase
+		uint8_t lcp:4;		//   LCP    state
+		uint8_t ipcp:4;		//   IPCP   state
+		uint8_t ipv6cp:4;	//   IPV6CP state
+		uint8_t ccp:4;		//   CCP    state
+	} ppp;
+	uint16_t mru;			// maximum receive unit
+	in_addr_t ip;			// IP of session set by RADIUS response (host byte order).
+	int ip_pool_index;		// index to IP pool
+	uint32_t unique_id;		// unique session id
+	uint32_t magic;			// ppp magic number
+	uint32_t pin, pout;		// packet counts
+	uint32_t cin, cout;		// byte counts
+	uint32_t cin_wrap, cout_wrap;	// byte counter wrap count (RADIUS accounting giagawords)
+	uint32_t cin_delta, cout_delta;	// byte count changes (for dump_session())
+	uint16_t throttle_in;		// upstream throttle rate (kbps)
+	uint16_t throttle_out;		// downstream throttle rate
+	uint8_t filter_in;		// input filter index (to ip_filters[N-1]; 0 if none)
+	uint8_t filter_out;		// output filter index
+	uint16_t snoop_port;		// Interception destination port
+	in_addr_t snoop_ip;		// Interception destination IP
+	clockt opened;			// when started
+	clockt die;			// being closed, when to finally free
+	uint32_t session_timeout;	// Maximum session time in seconds
+	uint32_t idle_timeout;		// Maximum idle time in seconds
+	time_t last_packet;		// Last packet from the user (used for idle timeouts)
+	time_t last_data;		// Last data packet to/from the user (used for idle timeouts)
+	in_addr_t dns1, dns2;		// DNS servers
+	routet route[MAXROUTE];		// static routes
+	uint16_t tbf_in;		// filter bucket for throttling in from the user.
+	uint16_t tbf_out;		// filter bucket for throttling out to the user.
+	int random_vector_length;
+	uint8_t random_vector[MAXTEL];
+	char user[MAXUSER];		// user (needed in session for radius stop messages)
+	char called[MAXTEL];		// called number
+	char calling[MAXTEL];		// calling number
+	uint32_t tx_connect_speed;
+	uint32_t rx_connect_speed;
+	clockt timeout;                 // Session timeout
+	uint32_t mrru;                  // Multilink Max-Receive-Reconstructed-Unit
+	epdist epdis;                   // Multilink Endpoint Discriminator
+	bundleidt bundle;               // Multilink Bundle Identifier
+	uint8_t mssf;                   // Multilink Short Sequence Number Header Format
+	uint8_t walled_garden;		// is this session gardened?
+	uint8_t classlen;		// class (needed for radius accounting messages)
+	char class[MAXCLASS];
+	uint8_t ipv6prefixlen;		// IPv6 route prefix length
+	struct in6_addr ipv6route;	// Static IPv6 route
+	sessionidt forwardtosession;	// LNS id_session to forward
+	uint8_t src_hwaddr[ETH_ALEN];	// MAC addr source (for pppoe sessions 6 bytes)
+	uint32_t dhcpv6_prefix_iaid;	// prefix iaid requested by client
+	uint32_t dhcpv6_iana_iaid;		// iaid of iana requested by client
+	struct in6_addr ipv6address;	// Framed Ipv6 address
+	struct dhcp6_opt_clientid dhcpv6_client_id; // Size max (headers + DUID)
+	char reserved[4];		// Space to expand structure without changing HB_VERSION
 };
 
 static uint8_t *convert_session(struct oldsession *old)
@@ -1291,17 +1580,24 @@ static uint8_t *convert_session(struct oldsession *old)
 	new.next = old->next;
 	new.far = old->far;
 	new.tunnel = old->tunnel;
-	new.flags = old->l2tp_flags;
+	new.flags = old->flags;
+	new.ppp.phase = old->ppp.phase;
+	new.ppp.lcp = old->ppp.lcp;
+	new.ppp.ipcp = old->ppp.ipcp;
+	new.ppp.ipv6cp = old->ppp.ipv6cp;
+	new.ppp.ccp = old->ppp.ccp;
 	new.ip = old->ip;
 	new.ip_pool_index = old->ip_pool_index;
 	new.unique_id = old->unique_id;
 	new.magic = old->magic;
 	new.pin = old->pin;
 	new.pout = old->pout;
-	new.cin = old->total_cin;
-	new.cout = old->total_cout;
-	new.cin_delta = old->cin;
-	new.cout_delta = old->cout;
+	new.cin = old->cin;
+	new.cout = old->cout;
+	new.cin_wrap = old->cin_wrap;
+	new.cout_wrap = old->cout_wrap;
+	new.cin_delta = old->cin_delta;
+	new.cout_delta = old->cout_delta;
 	new.throttle_in = old->throttle_in;
 	new.throttle_out = old->throttle_out;
 	new.filter_in = old->filter_in;
@@ -1309,7 +1605,10 @@ static uint8_t *convert_session(struct oldsession *old)
 	new.mru = old->mru;
 	new.opened = old->opened;
 	new.die = old->die;
+	new.session_timeout = old->session_timeout;
+	new.idle_timeout = old->idle_timeout;
 	new.last_packet = old->last_packet;
+	new.last_data = old->last_data;
 	new.dns1 = old->dns1;
 	new.dns2 = old->dns2;
 	new.tbf_in = old->tbf_in;
@@ -1317,9 +1616,16 @@ static uint8_t *convert_session(struct oldsession *old)
 	new.random_vector_length = old->random_vector_length;
 	new.tx_connect_speed = old->tx_connect_speed;
 	new.rx_connect_speed = old->rx_connect_speed;
+	new.timeout = old->timeout;
+	new.mrru = old->mrru;
+	new.mssf = old->mssf;
+	new.epdis = old->epdis;
+	new.bundle = old->bundle;
 	new.snoop_ip = old->snoop_ip;
 	new.snoop_port = old->snoop_port;
 	new.walled_garden = old->walled_garden;
+	new.route6[0].ipv6prefixlen = old->ipv6prefixlen;
+	new.route6[0].ipv6route = old->ipv6route;
 
 	memcpy(new.random_vector, old->random_vector, sizeof(new.random_vector));
 	memcpy(new.user, old->user, sizeof(new.user));
@@ -1329,20 +1635,151 @@ static uint8_t *convert_session(struct oldsession *old)
 	for (i = 0; i < MAXROUTE; i++)
 		memcpy(&new.route[i], &old->route[i], sizeof(new.route[i]));
 
-	if (new.opened)
-	{
-		new.ppp.phase = Establish;
-		if (old->flags & (SF_IPCP_ACKED|SF_LCP_ACKED))
-		{
-			new.ppp.phase = Network;
-			new.ppp.lcp   = Opened;
-			new.ppp.ipcp  = (old->flags & SF_IPCP_ACKED) ? Opened : Starting;
-			new.ppp.ccp   = (old->flags & SF_CCP_ACKED)  ? Opened : Stopped;
-		}
+	return (uint8_t *) &new;
+}
 
-		// no PPPv6 in old session
-		new.ppp.ipv6cp = Stopped;
-	}
+static uint8_t *convert_sessionV7(struct oldsessionV7 *old)
+{
+	static sessiont new;
+	int i;
+
+	memset(&new, 0, sizeof(new));
+
+	new.next = old->next;
+	new.far = old->far;
+	new.tunnel = old->tunnel;
+	new.flags = old->flags;
+	new.ppp.phase = old->ppp.phase;
+	new.ppp.lcp = old->ppp.lcp;
+	new.ppp.ipcp = old->ppp.ipcp;
+	new.ppp.ipv6cp = old->ppp.ipv6cp;
+	new.ppp.ccp = old->ppp.ccp;
+	new.mru = old->mru;
+	new.ip = old->ip;
+	new.ip_pool_index = old->ip_pool_index;
+	new.unique_id = old->unique_id;
+	new.magic = old->magic;
+	new.pin = old->pin;
+	new.pout = old->pout;
+	new.cin = old->cin;
+	new.cout = old->cout;
+	new.cin_wrap = old->cin_wrap;
+	new.cout_wrap = old->cout_wrap;
+	new.cin_delta = old->cin_delta;
+	new.cout_delta = old->cout_delta;
+	new.throttle_in = old->throttle_in;
+	new.throttle_out = old->throttle_out;
+	new.filter_in = old->filter_in;
+	new.filter_out = old->filter_out;
+	new.snoop_port = old->snoop_port;
+	new.snoop_ip = old->snoop_ip;
+	new.opened = old->opened;
+	new.die = old->die;
+	new.session_timeout = old->session_timeout;
+	new.idle_timeout = old->idle_timeout;
+	new.last_packet = old->last_packet;
+	new.last_data = old->last_data;
+	new.dns1 = old->dns1;
+	new.dns2 = old->dns2;
+	for (i = 0; i < MAXROUTE; i++)
+		memcpy(&new.route[i], &old->route[i], sizeof(new.route[i]));
+	new.tbf_in = old->tbf_in;
+	new.tbf_out = old->tbf_out;
+	new.random_vector_length = old->random_vector_length;
+	memcpy(new.random_vector, old->random_vector, sizeof(new.random_vector));
+	memcpy(new.user, old->user, sizeof(new.user));
+	memcpy(new.called, old->called, sizeof(new.called));
+	memcpy(new.calling, old->calling, sizeof(new.calling));
+	new.tx_connect_speed = old->tx_connect_speed;
+	new.rx_connect_speed = old->rx_connect_speed;
+	new.timeout = old->timeout;
+	new.mrru = old->mrru;
+	new.epdis = old->epdis;
+	new.bundle = old->bundle;
+	new.mssf = old->mssf;
+	new.walled_garden = old->walled_garden;
+	new.classlen = old->classlen;
+	memcpy(new.class, old->class, sizeof(new.class));
+	new.route6[0].ipv6prefixlen = old->ipv6prefixlen;
+	new.route6[0].ipv6route = old->ipv6route;
+
+	new.forwardtosession = old->forwardtosession;
+	memcpy(new.src_hwaddr, old->src_hwaddr, sizeof(new.src_hwaddr));
+
+	return (uint8_t *) &new;
+}
+
+static uint8_t *convert_sessionV8(struct oldsessionV8 *old)
+{
+	static sessiont new;
+	int i;
+
+	memset(&new, 0, sizeof(new));
+
+	new.next = old->next;
+	new.far = old->far;
+	new.tunnel = old->tunnel;
+	new.flags = old->flags;
+	new.ppp.phase = old->ppp.phase;
+	new.ppp.lcp = old->ppp.lcp;
+	new.ppp.ipcp = old->ppp.ipcp;
+	new.ppp.ipv6cp = old->ppp.ipv6cp;
+	new.ppp.ccp = old->ppp.ccp;
+	new.mru = old->mru;
+	new.ip = old->ip;
+	new.ip_pool_index = old->ip_pool_index;
+	new.unique_id = old->unique_id;
+	new.magic = old->magic;
+	new.pin = old->pin;
+	new.pout = old->pout;
+	new.cin = old->cin;
+	new.cout = old->cout;
+	new.cin_wrap = old->cin_wrap;
+	new.cout_wrap = old->cout_wrap;
+	new.cin_delta = old->cin_delta;
+	new.cout_delta = old->cout_delta;
+	new.throttle_in = old->throttle_in;
+	new.throttle_out = old->throttle_out;
+	new.filter_in = old->filter_in;
+	new.filter_out = old->filter_out;
+	new.snoop_port = old->snoop_port;
+	new.snoop_ip = old->snoop_ip;
+	new.opened = old->opened;
+	new.die = old->die;
+	new.session_timeout = old->session_timeout;
+	new.idle_timeout = old->idle_timeout;
+	new.last_packet = old->last_packet;
+	new.last_data = old->last_data;
+	new.dns1 = old->dns1;
+	new.dns2 = old->dns2;
+	for (i = 0; i < MAXROUTE; i++)
+		memcpy(&new.route[i], &old->route[i], sizeof(new.route[i]));
+	new.tbf_in = old->tbf_in;
+	new.tbf_out = old->tbf_out;
+	new.random_vector_length = old->random_vector_length;
+	memcpy(new.random_vector, old->random_vector, sizeof(new.random_vector));
+	memcpy(new.user, old->user, sizeof(new.user));
+	memcpy(new.called, old->called, sizeof(new.called));
+	memcpy(new.calling, old->calling, sizeof(new.calling));
+	new.tx_connect_speed = old->tx_connect_speed;
+	new.rx_connect_speed = old->rx_connect_speed;
+	new.timeout = old->timeout;
+	new.mrru = old->mrru;
+	new.epdis = old->epdis;
+	new.bundle = old->bundle;
+	new.mssf = old->mssf;
+	new.walled_garden = old->walled_garden;
+	new.classlen = old->classlen;
+	memcpy(new.class, old->class, sizeof(new.class));
+	new.route6[0].ipv6prefixlen = old->ipv6prefixlen;
+	new.route6[0].ipv6route = old->ipv6route;
+
+	new.forwardtosession = old->forwardtosession;
+	memcpy(new.src_hwaddr, old->src_hwaddr, sizeof(new.src_hwaddr));
+	new.dhcpv6_prefix_iaid = old->dhcpv6_prefix_iaid;
+	new.dhcpv6_iana_iaid = old->dhcpv6_iana_iaid;
+	new.ipv6address = old->ipv6address;
+	new.dhcpv6_client_id = old->dhcpv6_client_id;
 
 	return (uint8_t *) &new;
 }
@@ -1350,9 +1787,8 @@ static uint8_t *convert_session(struct oldsession *old)
 //
 // Process a heartbeat..
 //
-// v3: added interval, timeout
-// v4: added table_version
-// v5: added ipv6, re-ordered session structure
+// v6: added RADIUS class attribute, re-ordered session structure
+// v7: added tunnelt attribute at the end of struct (tunnelt size change)
 static int cluster_process_heartbeat(uint8_t *data, int size, int more, uint8_t *p, in_addr_t addr)
 {
 	heartt *h;
@@ -1360,12 +1796,12 @@ static int cluster_process_heartbeat(uint8_t *data, int size, int more, uint8_t 
 	int i, type;
 	int hb_ver = more;
 
-#if HB_VERSION != 7
+#if HB_VERSION != 9
 # error "need to update cluster_process_heartbeat()"
 #endif
 
-	// we handle versions 3 through 7
-	if (hb_ver < 3 || hb_ver > HB_VERSION) {
+	// we handle versions 5 through 8
+	if (hb_ver < 5 || hb_ver > HB_VERSION) {
 		LOG(0, 0, 0, "Received a heartbeat version that I don't support (%d)!\n", hb_ver);
 		return -1; // Ignore it??
 	}
@@ -1394,17 +1830,16 @@ static int cluster_process_heartbeat(uint8_t *data, int size, int more, uint8_t 
 			return -1; // Skip it.
 		}
 
-		if (hb_ver >= 4) {
-			if (h->table_version > config->cluster_table_version) {
-				LOG(0, 0, 0, "They've seen more state changes (%" PRIu64 " vs my %" PRIu64 ") so I'm gone!\n",
+		if (h->table_version > config->cluster_table_version) {
+			LOG(0, 0, 0, "They've seen more state changes (%" PRIu64 " vs my %" PRIu64 ") so I'm gone!\n",
 					h->table_version, config->cluster_table_version);
 
-				kill(0, SIGTERM);
-				exit(1);
-			}
-			if (h->table_version < config->cluster_table_version)
-			    	return -1;
+			kill(0, SIGTERM);
+			exit(1);
 		}
+
+		if (h->table_version < config->cluster_table_version)
+			return -1;
 
 		if (basetime > h->basetime) {
 			LOG(0, 0, 0, "They're an older master than me so I'm gone!\n");
@@ -1488,7 +1923,7 @@ static int cluster_process_heartbeat(uint8_t *data, int size, int more, uint8_t 
 
 			// Check that we don't have too many undefined sessions, and
 			// that the free session pointer is correct.
-	cluster_check_sessions(h->highsession, h->freesession, h->hightunnel);
+	cluster_check_sessions(h->highsession, h->freesession, h->highbundle, h->hightunnel);
 
 	if (h->interval != config->cluster_hb_interval)
 	{
@@ -1527,7 +1962,7 @@ static int cluster_process_heartbeat(uint8_t *data, int size, int more, uint8_t 
 				s -= (p - orig_p);
 
 				// session struct changed with v5
-				if (hb_ver < 5)
+				if (hb_ver < 6)
 				{
 					if (size != sizeof(struct oldsession)) {
 						LOG(0, 0, 0, "DANGER: Received a v%d CSESSION that didn't decompress correctly!\n", hb_ver);
@@ -1538,17 +1973,30 @@ static int cluster_process_heartbeat(uint8_t *data, int size, int more, uint8_t 
 					break;
 				}
 
-				if (size != sizeof(sessiont) ) { // Ouch! Very very bad!
-					LOG(0, 0, 0, "DANGER: Received a CSESSION that didn't decompress correctly!\n");
-						// Now what? Should exit! No-longer up to date!
-					break;
+				if (size != sizeof(sessiont)) { // Ouch! Very very bad!
+					if ((hb_ver < HB_VERSION) && (size < sizeof(sessiont)))
+					{
+						if ((hb_ver == 7) && (size == sizeof(struct oldsessionV7)))
+							cluster_recv_session(more, convert_sessionV7((struct oldsessionV7 *) c));
+						else if (size == sizeof(struct oldsessionV8))
+							cluster_recv_session(more, convert_sessionV8((struct oldsessionV8 *) c));
+						else
+							LOG(0, 0, 0, "DANGER: Received a CSESSION version=%d that didn't decompress correctly!\n", hb_ver);
+						break;
+					}
+					else
+					{
+						LOG(0, 0, 0, "DANGER: Received a CSESSION that didn't decompress correctly!\n");
+							// Now what? Should exit! No-longer up to date!
+						break;
+					}
 				}
 
 				cluster_recv_session(more, c);
 				break;
 			}
 			case C_SESSION:
-			    	if (hb_ver < 5)
+				if (hb_ver < 6)
 				{
 					if (s < sizeof(struct oldsession))
 						goto shortpacket;
@@ -1577,7 +2025,9 @@ static int cluster_process_heartbeat(uint8_t *data, int size, int more, uint8_t 
 				size = rle_decompress((uint8_t **) &p, s, c, sizeof(c));
 				s -= (p - orig_p);
 
-				if (size != sizeof(tunnelt) ) { // Ouch! Very very bad!
+				if ( ((hb_ver >= HB_VERSION) && (size != sizeof(tunnelt))) ||
+					 ((hb_ver < HB_VERSION) && (size > sizeof(tunnelt))) )
+				{ // Ouch! Very very bad!
 					LOG(0, 0, 0, "DANGER: Received a CTUNNEL that didn't decompress correctly!\n");
 						// Now what? Should exit! No-longer up to date!
 					break;
@@ -1596,6 +2046,34 @@ static int cluster_process_heartbeat(uint8_t *data, int size, int more, uint8_t 
 				p += sizeof(tunnel[more]);
 				s -= sizeof(tunnel[more]);
 				break;
+
+			case C_CBUNDLE: { // Compressed bundle structure.
+				uint8_t c[ sizeof(bundlet) + 2];
+				int size;
+				uint8_t *orig_p = p;
+
+				size = rle_decompress((uint8_t **) &p, s, c, sizeof(c));
+				s -= (p - orig_p);
+
+				if (size != sizeof(bundlet) ) { // Ouch! Very very bad!
+					LOG(0, 0, 0, "DANGER: Received a CBUNDLE that didn't decompress correctly!\n");
+						// Now what? Should exit! No-longer up to date!
+					break;
+				}
+
+				cluster_recv_bundle(more, c);
+				break;
+
+			}
+			case C_BUNDLE:
+				if ( s < sizeof(bundle[more]))
+                                        goto shortpacket;
+
+                                cluster_recv_bundle(more, p);
+
+                                p += sizeof(bundle[more]);
+                                s -= sizeof(bundle[more]);
+                                break;
 			default:
 				LOG(0, 0, 0, "DANGER: I received a heartbeat element where I didn't understand the type! (%d)\n", type);
 				return -1; // can't process any more of the packet!!
@@ -1663,7 +2141,7 @@ int processcluster(uint8_t *data, int size, in_addr_t addr)
 	case C_FORWARD_DAE: // Forwarded DAE packet. pass off to processdae.
 		if (!config->cluster_iam_master)
 		{
-			LOG(0, 0, 0, "I'm not the master, but I got a C_FORWARD_%s from %s?\n",
+			LOG(0, 0, 0, "I'm not the master, but I got a C_FORWARD%s from %s?\n",
 				type == C_FORWARD_DAE ? "_DAE" : "", fmtaddr(addr, 0));
 
 			return -1;
@@ -1671,9 +2149,11 @@ int processcluster(uint8_t *data, int size, in_addr_t addr)
 		else
 		{
 			struct sockaddr_in a;
+			uint16_t indexudp;
 			a.sin_addr.s_addr = more;
 
-			a.sin_port = *(int *) p;
+			a.sin_port = (*(int *) p) & 0xFFFF;
+			indexudp = ((*(int *) p) >> 16) & 0xFFFF;
 			s -= sizeof(int);
 			p += sizeof(int);
 
@@ -1688,10 +2168,31 @@ int processcluster(uint8_t *data, int size, in_addr_t addr)
 				processdae(p, s, &a, sizeof(a), &local);
 			}
 			else
-				processudp(p, s, &a);
+				processudp(p, s, &a, indexudp);
 
 			return 0;
 		}
+	case C_PPPOE_FORWARD:
+		if (!config->cluster_iam_master)
+		{
+			LOG(0, 0, 0, "I'm not the master, but I got a C_PPPOE_FORWARD from %s?\n", fmtaddr(addr, 0));
+			return -1;
+		}
+		else
+		{
+			pppoe_process_forward(p, s, addr);
+			return 0;
+		}
+
+	case C_MPPP_FORWARD:
+		// Receive a MPPP packet from a slave.
+		if (!config->cluster_iam_master) {
+			LOG(0, 0, 0, "I'm not the master, but I got a C_MPPP_FORWARD from %s?\n", fmtaddr(addr, 0));
+			return -1;
+		}
+
+		processipout(p, s);
+		return 0;
 
 	case C_THROTTLE: {	// Receive a forwarded packet from a slave.
 		if (!config->cluster_iam_master) {
@@ -1758,7 +2259,7 @@ shortpacket:
 
 //====================================================================================================
 
-int cmd_show_cluster(struct cli_def *cli, char *command, char **argv, int argc)
+int cmd_show_cluster(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 
@@ -1769,6 +2270,7 @@ int cmd_show_cluster(struct cli_def *cli, char *command, char **argv, int argc)
 	cli_print(cli, "My address       : %s", fmtaddr(my_address, 0));
 	cli_print(cli, "VIP address      : %s", fmtaddr(config->bind_address, 0));
 	cli_print(cli, "Multicast address: %s", fmtaddr(config->cluster_address, 0));
+	cli_print(cli, "UDP port         : %u", config->cluster_port);
 	cli_print(cli, "Multicast i'face : %s", config->cluster_interface);
 
 	if (!config->cluster_iam_master) {
@@ -1781,11 +2283,13 @@ int cmd_show_cluster(struct cli_def *cli, char *command, char **argv, int argc)
 		cli_print(cli, "Table version #  : %" PRIu64, config->cluster_table_version);
 		cli_print(cli, "Next sequence number expected: %d", config->cluster_seq_number);
 		cli_print(cli, "%d sessions undefined of %d", config->cluster_undefined_sessions, config->cluster_highest_sessionid);
+		cli_print(cli, "%d bundles undefined of %d", config->cluster_undefined_bundles, config->cluster_highest_bundleid);
 		cli_print(cli, "%d tunnels undefined of %d", config->cluster_undefined_tunnels, config->cluster_highest_tunnelid);
 	} else {
 		cli_print(cli, "Table version #  : %" PRIu64, config->cluster_table_version);
 		cli_print(cli, "Next heartbeat # : %d", config->cluster_seq_number);
 		cli_print(cli, "Highest session  : %d", config->cluster_highest_sessionid);
+		cli_print(cli, "Highest bundle   : %d", config->cluster_highest_bundleid);
 		cli_print(cli, "Highest tunnel   : %d", config->cluster_highest_tunnelid);
 		cli_print(cli, "%d changes queued for sending", config->cluster_num_changes);
 	}

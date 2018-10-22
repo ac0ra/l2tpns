@@ -1,9 +1,6 @@
 // L2TPNS Command Line Interface
 // vim: sw=8 ts=8
 
-char const *cvs_name = "$Name: release_2_1_21 $";
-char const *cvs_id_cli = "$Id: cli.c,v 1.71 2005/12/06 09:43:42 bodea Exp $";
-
 #include <stdio.h>
 #include <stddef.h>
 #include <stdarg.h>
@@ -25,6 +22,7 @@ char const *cvs_id_cli = "$Id: cli.c,v 1.71 2005/12/06 09:43:42 bodea Exp $";
 #include <netdb.h>
 #include <libcli.h>
 
+#include "dhcp6.h"
 #include "l2tpns.h"
 #include "constants.h"
 #include "util.h"
@@ -37,8 +35,10 @@ char const *cvs_id_cli = "$Id: cli.c,v 1.71 2005/12/06 09:43:42 bodea Exp $";
 #ifdef FREETRAFFIC
 #include "freetraffic.h"
 #endif
+#include "l2tplac.h"
 
 extern tunnelt *tunnel;
+extern bundlet *bundle;
 extern sessiont *session;
 extern radiust *radius;
 extern ippoolt *ip_address_pool[256][256];
@@ -78,30 +78,34 @@ static char *debug_levels[] = {
 
 #endif
 
-static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_show_tunnels(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_show_users(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_show_radius(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_show_version(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_show_pool(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_show_run(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_show_banana(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_show_plugins(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_show_throttle(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_write_memory(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_drop_user(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_drop_tunnel(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_drop_session(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_snoop(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_no_snoop(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_throttle(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_no_throttle(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_debug(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_no_debug(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_set(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_load_plugin(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_remove_plugin(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_uptime(struct cli_def *cli, char *command, char **argv, int argc);
+static int cmd_show_session(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_show_tunnels(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_show_users(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_show_radius(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_show_version(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_show_pool(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_show_run(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_show_banana(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_show_plugins(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_show_throttle(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_write_memory(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_drop_user(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_drop_tunnel(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_drop_session(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_snoop(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_no_snoop(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_throttle(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_no_throttle(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_debug(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_no_debug(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_set(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_load_plugin(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_remove_plugin(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_uptime(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_shutdown(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_reload(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_setforward(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_show_rmtlnsconf(struct cli_def *cli, const char *command, char **argv, int argc);
 
 static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int argc);
 static int cmd_add_ip_pool(struct cli_def *cli, char *command, char **argv, int argc);
@@ -109,28 +113,28 @@ static int cmd_add_ip_pool(struct cli_def *cli, char *command, char **argv, int 
 static int regular_stuff(struct cli_def *cli);
 
 #ifdef STATISTICS
-static int cmd_show_counters(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_clear_counters(struct cli_def *cli, char *command, char **argv, int argc);
+static int cmd_show_counters(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_clear_counters(struct cli_def *cli, const char *command, char **argv, int argc);
 #endif /* STATISTICS */
 
 #ifdef BGP
 #define MODE_CONFIG_BGP 8
-static int cmd_router_bgp(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_router_bgp_neighbour(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_router_bgp_no_neighbour(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_show_bgp(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_suspend_bgp(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_no_suspend_bgp(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_restart_bgp(struct cli_def *cli, char *command, char **argv, int argc);
+static int cmd_router_bgp(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_router_bgp_neighbour(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_router_bgp_no_neighbour(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_show_bgp(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_suspend_bgp(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_no_suspend_bgp(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_restart_bgp(struct cli_def *cli, const char *command, char **argv, int argc);
 #endif /* BGP */
 
 #define MODE_CONFIG_NACL 9
-static int cmd_ip_access_list(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_no_ip_access_list(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_ip_access_list_rule(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_filter(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_no_filter(struct cli_def *cli, char *command, char **argv, int argc);
-static int cmd_show_access_list(struct cli_def *cli, char *command, char **argv, int argc);
+static int cmd_ip_access_list(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_no_ip_access_list(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_ip_access_list_rule(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_filter(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_no_filter(struct cli_def *cli, const char *command, char **argv, int argc);
+static int cmd_show_access_list(struct cli_def *cli, const char *command, char **argv, int argc);
 
 #ifdef FREETRAFFIC
 static int cmd_show_free_networks(struct cli_def *cli, char *command, char **argv, int argc);
@@ -141,20 +145,14 @@ static int cmd_remove_free_network(struct cli_def *cli, char *command, char **ar
 /* match if b is a substr of a */
 #define MATCH(a,b) (!strncmp((a), (b), strlen(b)))
 
-void init_cli(char *hostname)
+void init_cli()
 {
 	FILE *f;
 	char buf[4096];
 	struct cli_command *c;
 	struct cli_command *c2;
-	int on = 1;
-	struct sockaddr_in addr;
 
 	cli = cli_init();
-	if (hostname && *hostname)
-		cli_set_hostname(cli, hostname);
-	else
-		cli_set_hostname(cli, "l2tpns");
 
 	c = cli_register_command(cli, NULL, "show", NULL, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, NULL);
 	cli_register_command(cli, c, "banana", cmd_show_banana, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "Show a banana");
@@ -167,6 +165,7 @@ void init_cli(char *hostname)
 	cli_register_command(cli, c, "pool", cmd_show_pool, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "Show the IP address allocation pool");
 	cli_register_command(cli, c, "radius", cmd_show_radius, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "Show active radius queries");
 	cli_register_command(cli, c, "running-config", cmd_show_run, PRIVILEGE_PRIVILEGED, MODE_EXEC, "Show the currently running configuration");
+	cli_register_command(cli, c, "remotelns-conf", cmd_show_rmtlnsconf, PRIVILEGE_PRIVILEGED, MODE_EXEC, "Show a list of remote LNS configuration");
 	cli_register_command(cli, c, "session", cmd_show_session, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "Show a list of sessions or details for a single session");
 	cli_register_command(cli, c, "tbf", cmd_show_tbf, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "List all token bucket filters in use");
 	cli_register_command(cli, c, "throttle", cmd_show_throttle, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "List all throttled sessions and associated TBFs");
@@ -190,6 +189,8 @@ void init_cli(char *hostname)
 #endif
 
 	cli_register_command(cli, NULL, "uptime", cmd_uptime, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "Show uptime and bandwidth utilisation");
+	cli_register_command(cli, NULL, "shutdown", cmd_shutdown, PRIVILEGE_PRIVILEGED, MODE_EXEC, "Shutdown l2tpns daemon and exit");
+	cli_register_command(cli, NULL, "reload", cmd_reload, PRIVILEGE_PRIVILEGED, MODE_EXEC, "Reload configuration");
 
 	c = cli_register_command(cli, NULL, "write", NULL, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, NULL);
 	cli_register_command(cli, c, "memory", cmd_write_memory, PRIVILEGE_PRIVILEGED, MODE_EXEC, "Save the running config to flash");
@@ -244,6 +245,8 @@ void init_cli(char *hostname)
 
 	cli_register_command(cli, NULL, "set", cmd_set, PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Set a configuration variable");
 
+	cli_register_command(cli, NULL, "setforward", cmd_setforward, PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Set the Remote LNS Forward");
+
 	c = cli_register_command(cli, NULL, "ip", NULL, PRIVILEGE_PRIVILEGED, MODE_CONFIG, NULL);
 	cli_register_command(cli, c, "access-list", cmd_ip_access_list, PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Add named access-list");
 
@@ -290,9 +293,20 @@ void init_cli(char *hostname)
 		}
 		fclose(f);
 	}
+}
+
+void cli_init_complete(char *hostname)
+{
+	int on = 1;
+	struct sockaddr_in addr;
+
+	if (hostname && *hostname)
+		cli_set_hostname(cli, hostname);
+	else
+		cli_set_hostname(cli, "l2tpns");
 
 	memset(&addr, 0, sizeof(addr));
-	clifd = socket(PF_INET, SOCK_STREAM, 6);
+	clifd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
 	setsockopt(clifd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
 	{
 		int flags;
@@ -301,13 +315,22 @@ void init_cli(char *hostname)
 		fcntl(clifd, F_SETFL, flags | O_NONBLOCK);
 	}
 	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = config->cli_bind_address; /* defaults to INADDR_ANY */
 	addr.sin_port = htons(23);
 	if (bind(clifd, (void *) &addr, sizeof(addr)) < 0)
 	{
-		LOG(0, 0, 0, "Error listening on cli port 23: %s\n", strerror(errno));
+		LOG(0, 0, 0, "Error binding cli on port 23: %s\n", strerror(errno));
+		close(clifd);
+		clifd = -1;
 		return;
 	}
-	listen(clifd, 10);
+	if (listen(clifd, 10) < 0)
+	{
+		LOG(0, 0, 0, "Error listening on cli port 23: %s\n", strerror(errno));
+		close(clifd);
+		clifd = -1;
+		return;
+	}
 }
 
 void cli_do(int sockfd)
@@ -356,7 +379,7 @@ void cli_do(int sockfd)
 	exit(0);
 }
 
-static void cli_print_log(struct cli_def *cli, char *string)
+static void cli_print_log(struct cli_def *cli, const char *string)
 {
 	LOG(3, 0, 0, "%s\n", string);
 }
@@ -405,7 +428,7 @@ int cli_arg_help(struct cli_def *cli, int cr_ok, char *entry, ...)
 	return CLI_OK;
 }
 
-static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_show_session(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	char *tspeed = malloc(MAXGARDEN);
@@ -450,6 +473,26 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 			cli_print(cli, "\tUnique SID:\t%u", session[s].unique_id);
 			cli_print(cli, "\tOpened:\t\t%u seconds", session[s].opened ? abs(time_now - session[s].opened) : 0);
 			cli_print(cli, "\tIdle time:\t%u seconds", session[s].last_packet ? abs(time_now - session[s].last_packet) : 0);
+			if (session[s].session_timeout)
+			{
+			    	clockt opened = session[s].opened;
+				if (session[s].bundle && bundle[session[s].bundle].num_of_links > 1)
+					opened = bundle[session[s].bundle].online_time;
+
+				cli_print(cli, "\tSess Timeout:\t%u seconds", session[s].session_timeout - (opened ? abs(time_now - opened) : 0));
+			}
+
+			if (session[s].idle_timeout)
+				cli_print(cli, "\tIdle Timeout:\t%u seconds", session[s].idle_timeout - (session[s].last_data ? abs(time_now - session[s].last_data) : 0));
+
+			if (session[s].timeout)
+			{
+				cli_print(cli, "\tRemaining time:\t%u",
+					(session[s].bundle && bundle[session[s].bundle].num_of_links > 1)
+					? (unsigned) (session[s].timeout - bundle[session[s].bundle].online_time)
+					: (unsigned) (session[s].timeout - (time_now - session[s].opened)));
+			}
+
 			cli_print(cli, "\tBytes In/Out:\t%u/%u", session[s].cout, session[s].cin);
 			cli_print(cli, "\tPkts In/Out:\t%u/%u", session[s].pout, session[s].pin);
 			cli_print(cli, "\tMRU:\t\t%d", session[s].mru);
@@ -532,8 +575,9 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 	}
 
 	// Show Summary
-	cli_print(cli, "%5s %4s %-32s %-15s %s %s %s %s %-16s %-16s %10s %10s %10s %4s %-15s %s",
+	cli_print(cli, "%5s %7s %4s %-32s %-15s %s %s %s %s %10s %10s %10s %4s %10s %-18s %s",
 			"SID",
+			"LkToSID",
 			"TID",
 			"Username",
 			"IP",
@@ -547,20 +591,21 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 			"downloaded",
 			"uploaded",
 			"idle",
-			"LAC",
+			"Rem.Time",
+			"LAC(L)/RLNS(R)/PPPOE(P)",
 			"CLI");
 
 	for (i = 1; i < MAXSESSION; i++)
 	{
+		uint32_t rem_time;
 		if (!session[i].opened) continue;
-		
-		int t = (session[i].throttle_in || session[i].throttle_out);  //req for showing throttle speed
-		if (t) {
-			sprintf(tspeed, "%.0dkbps/%.0dkbps", session[i].throttle_in, session[i].throttle_out);
-		}
-
-		cli_print(cli, "%5d %4d %-32s %-15s %s %s %s %s %-16s %-16s %10u %10lu %10lu %4u %-15s %s",
+		if (session[i].bundle && bundle[session[i].bundle].num_of_links > 1)
+			rem_time = session[i].timeout ? (session[i].timeout - bundle[session[i].bundle].online_time) : 0;
+		else
+			rem_time = session[i].timeout ? (session[i].timeout - (time_now-session[i].opened)) : 0;
+		cli_print(cli, "%5d %7d %4d %-32s %-15s %s %s %s %s %10u %10lu %10lu %4u %10lu %3s%-20s %s",
 				i,
+				session[i].forwardtosession,
 				session[i].tunnel,
 				session[i].user[0] ? session[i].user : "*",
 				fmtaddr(htonl(session[i].ip), 0),
@@ -574,7 +619,9 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 				(unsigned long)session[i].cout,
 				(unsigned long)session[i].cin,
 				abs(time_now - (session[i].last_packet ? session[i].last_packet : time_now)),
-				fmtaddr(htonl(tunnel[ session[i].tunnel ].ip), 1),
+				(unsigned long)(rem_time),
+				(session[i].tunnel == TUNNEL_ID_PPPOE)?"(P)":(tunnel[session[i].tunnel].isremotelns?"(R)":"(L)"),
+				(session[i].tunnel == TUNNEL_ID_PPPOE)?fmtMacAddr(session[i].src_hwaddr):fmtaddr(htonl(tunnel[session[i].tunnel].ip), 1),
 				session[i].calling[0] ? session[i].calling : "*");
 	}
 
@@ -582,7 +629,7 @@ static int cmd_show_session(struct cli_def *cli, char *command, char **argv, int
 	return CLI_OK;
 }
 
-static int cmd_show_tunnels(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_show_tunnels(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i, x, show_all = 0;
 	char *states[] = {
@@ -660,18 +707,20 @@ static int cmd_show_tunnels(struct cli_def *cli, char *command, char **argv, int
 		if (!show_all && (!tunnel[i].ip || tunnel[i].die)) continue;
 
 		for (x = 0; x < MAXSESSION; x++) if (session[x].tunnel == i && session[x].opened && !session[x].die) sessions++;
-		cli_print(cli, "%4d %20s %20s %6s %6d",
+		cli_print(cli, "%4d %20s %20s %6s %6d %s",
 				i,
 				*tunnel[i].hostname ? tunnel[i].hostname : "(null)",
 				fmtaddr(htonl(tunnel[i].ip), 0),
 				states[tunnel[i].state],
-				sessions);
+				sessions
+				,(i == TUNNEL_ID_PPPOE)?"Tunnel pppoe":(tunnel[i].isremotelns?"Tunnel To Remote LNS":"Tunnel To LAC")
+				);
 	}
 
 	return CLI_OK;
 }
 
-static int cmd_show_users(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_show_users(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	char sid[32][8];
 	char *sargv[32];
@@ -713,7 +762,7 @@ static int cmd_show_users(struct cli_def *cli, char *command, char **argv, int a
 }
 
 #ifdef STATISTICS
-static int cmd_show_counters(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_show_counters(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	if (CLI_HELP_REQUESTED)
 		return CLI_HELP_NO_ARGS;
@@ -728,7 +777,7 @@ static int cmd_show_counters(struct cli_def *cli, char *command, char **argv, in
 			GET_STAT(tun_tx_bytes),
 			GET_STAT(tun_tx_packets),
 			GET_STAT(tun_tx_errors));
-	cli_print(cli, "");
+	cli_print(cli, " ");
 
 	cli_print(cli, "%-10s %10s %10s %10s %10s", "Tunnel", "Bytes", "Packets", "Errors", "Retries");
 	cli_print(cli, "%-10s %10u %10u %10u", "RX",
@@ -740,7 +789,7 @@ static int cmd_show_counters(struct cli_def *cli, char *command, char **argv, in
 			GET_STAT(tunnel_tx_packets),
 			GET_STAT(tunnel_tx_errors),
 			GET_STAT(tunnel_retries));
-	cli_print(cli, "");
+	cli_print(cli, " ");
 
 	cli_print(cli, "%-30s%-10s", "Counter", "Value");
 	cli_print(cli, "-----------------------------------------");
@@ -806,14 +855,14 @@ static int cmd_show_counters(struct cli_def *cli, char *command, char **argv, in
 		char *p = strchr(t, '\n');
 		if (p) *p = 0;
 
-		cli_print(cli, "");
+		cli_print(cli, " ");
 		cli_print(cli, "Last counter reset %s", t);
 	}
 
 	return CLI_OK;
 }
 
-static int cmd_clear_counters(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_clear_counters(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	if (CLI_HELP_REQUESTED)
 		return CLI_HELP_NO_ARGS;
@@ -826,103 +875,16 @@ static int cmd_clear_counters(struct cli_def *cli, char *command, char **argv, i
 }
 #endif /* STATISTICS */
 
-static int cmd_show_version(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_show_version(struct cli_def *cli, const char *command, char **argv, int argc)
 {
-	int tag = 0;
-	int file = 0;
-	int i = 0;
-
 	if (CLI_HELP_REQUESTED)
-		return cli_arg_help(cli, 1,
-			"tag", "Include CVS release tag",
-			"file", "Include file versions",
-			NULL);
-
-	for (i = 0; i < argc; i++)
-		if (!strcmp(argv[i], "tag"))
-			tag++;
-		else if (!strcmp(argv[i], "file"))
-			file++;
+		return CLI_HELP_NO_ARGS;
 
 	cli_print(cli, "L2TPNS %s", VERSION);
-	if (tag)
-	{
-		char const *p = strchr(cvs_name, ':');
-		char const *e;
-		if (p)
-		{
-			p++;
-			while (isspace(*p))
-				p++;
-		}
-
-		if (!p || *p == '$')
-			p = "HEAD";
-
-		e = strpbrk(p, " \t$");
-		cli_print(cli, "Tag: %.*s", (int) (e ? e - p + 1 : strlen(p)), p);
-	}
-	
-	if (file)
-	{
-		extern linked_list *loaded_plugins;
-		void *p;
-
-		cli_print(cli, "Files:");
-		cli_print(cli, "  %s", cvs_id_arp);
-#ifdef BGP
-		cli_print(cli, "  %s", cvs_id_bgp);
-#endif /* BGP */
-		cli_print(cli, "  %s", cvs_id_cli);
-		cli_print(cli, "  %s", cvs_id_cluster);
-		cli_print(cli, "  %s", cvs_id_constants);
-		cli_print(cli, "  %s", cvs_id_control);
-		cli_print(cli, "  %s", cvs_id_icmp);
-		cli_print(cli, "  %s", cvs_id_l2tpns);
-		cli_print(cli, "  %s", cvs_id_ll);
-		cli_print(cli, "  %s", cvs_id_ppp);
-		cli_print(cli, "  %s", cvs_id_radius);
-		cli_print(cli, "  %s", cvs_id_tbf);
-		cli_print(cli, "  %s", cvs_id_util);
-
-		ll_reset(loaded_plugins);
-		while ((p = ll_next(loaded_plugins)))
-		{
-			char const **id = dlsym(p, "cvs_id");
-			if (id)
-				cli_print(cli, "  %s", *id);
-		}
-	}
-
 	return CLI_OK;
 }
 
-void display_pool(ippoolt ip,int show_all,int *used,int *free)
-{
-        if (!ip.address) return;
-        if (ip.assigned)
-        {
-          cli_print(cli, "%-15s\tY %8d %s",
-                    fmtaddr(htonl(ip.address), 0),
-                    ip.session,
-                    session[ip.session].user);
-
-          (*used)++;
-        }
-        else
-        {
-          if (ip.last)
-            cli_print(cli, "%-15s\tN %8s [%s] %ds",
-                      fmtaddr(htonl(ip.address), 0), "",
-                      ip.user, (int) time_now - ip.last);
-
-          else if (show_all)
-            cli_print(cli, "%-15s\tN", fmtaddr(htonl(ip.address), 0));
-          (*free)++;
-        }  
-}
-
-static int cmd_show_pool(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_show_pool(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	int used = 0, free = 0, show_all = 0, show_summary = 0;
@@ -996,13 +958,13 @@ static int cmd_show_pool(struct cli_def *cli, char *command, char **argv, int ar
 }
 
 static FILE *save_config_fh = 0;
-static void print_save_config(struct cli_def *cli, char *string)
+static void print_save_config(struct cli_def *cli, const char *string)
 {
 	if (save_config_fh)
 		fprintf(save_config_fh, "%s\n", string);
 }
 
-static int cmd_write_memory(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_write_memory(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	if (CLI_HELP_REQUESTED)
 		return CLI_HELP_NO_ARGS;
@@ -1025,7 +987,7 @@ static int cmd_write_memory(struct cli_def *cli, char *command, char **argv, int
 
 static char const *show_access_list_rule(int extended, ip_filter_rulet *rule);
 
-static int cmd_show_run(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_show_run(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	char ipv6addr[INET6_ADDRSTRLEN];
@@ -1093,6 +1055,11 @@ static int cmd_show_run(struct cli_def *cli, char *command, char **argv, int arg
 				h = BGP_HOLD_TIME;
 
 			cli_print(cli, " neighbour %s timers %d %d", config->neighbour[i].name, k, h);
+
+			if (config->neighbour[i].update_source.s_addr != INADDR_ANY)
+				cli_print(cli, " neighbour %s update-source %s",
+						config->neighbour[i].name,
+						inet_ntoa(config->neighbour[i].update_source));
 		}
 	}
 #endif
@@ -1117,7 +1084,7 @@ static int cmd_show_run(struct cli_def *cli, char *command, char **argv, int arg
 	return CLI_OK;
 }
 
-static int cmd_show_radius(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_show_radius(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i, free = 0, used = 0, show_all = 0;
 	char *states[] = {
@@ -1172,7 +1139,7 @@ static int cmd_show_radius(struct cli_def *cli, char *command, char **argv, int 
 	return CLI_OK;
 }
 
-static int cmd_show_plugins(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_show_plugins(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 
@@ -1187,7 +1154,7 @@ static int cmd_show_plugins(struct cli_def *cli, char *command, char **argv, int
 	return CLI_OK;
 }
 
-static int cmd_show_throttle(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_show_throttle(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 
@@ -1219,7 +1186,7 @@ static int cmd_show_throttle(struct cli_def *cli, char *command, char **argv, in
 	return CLI_OK;
 }
 
-static int cmd_show_banana(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_show_banana(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	if (CLI_HELP_REQUESTED)
 		return CLI_HELP_NO_ARGS;
@@ -1242,7 +1209,7 @@ static int cmd_show_banana(struct cli_def *cli, char *command, char **argv, int 
 	return CLI_OK;
 }
 
-static int cmd_drop_user(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_drop_user(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	sessionidt s;
@@ -1283,7 +1250,7 @@ static int cmd_drop_user(struct cli_def *cli, char *command, char **argv, int ar
 	return CLI_OK;
 }
 
-static int cmd_drop_tunnel(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_drop_tunnel(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	tunnelidt t;
@@ -1333,7 +1300,7 @@ static int cmd_drop_tunnel(struct cli_def *cli, char *command, char **argv, int 
 	return CLI_OK;
 }
 
-static int cmd_drop_session(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_drop_session(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	sessionidt s;
@@ -1369,6 +1336,11 @@ static int cmd_drop_session(struct cli_def *cli, char *command, char **argv, int
 			cli_print(cli, "Dropping session %d", s);
 			cli_session_actions[s].action |= CLI_SESS_KILL;
 		}
+		else if (session[s].forwardtosession && session[s].opened && !session[s].die)
+		{
+			cli_print(cli, "Dropping session %d", s);
+			cli_session_actions[s].action |= CLI_SESS_KILL;
+		}
 		else
 		{
 			cli_error(cli, "Session %d is not active.", s);
@@ -1378,7 +1350,7 @@ static int cmd_drop_session(struct cli_def *cli, char *command, char **argv, int
 	return CLI_OK;
 }
 
-static int cmd_snoop(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_snoop(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	in_addr_t ip;
 	uint16_t port;
@@ -1451,7 +1423,7 @@ static int cmd_snoop(struct cli_def *cli, char *command, char **argv, int argc)
 	return CLI_OK;
 }
 
-static int cmd_no_snoop(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_no_snoop(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	sessionidt s;
@@ -1489,7 +1461,7 @@ static int cmd_no_snoop(struct cli_def *cli, char *command, char **argv, int arg
 	return CLI_OK;
 }
 
-static int cmd_throttle(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_throttle(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int rate_in = 0;
 	int rate_out = 0;
@@ -1617,7 +1589,7 @@ static int cmd_throttle(struct cli_def *cli, char *command, char **argv, int arg
 	return CLI_OK;
 }
 
-static int cmd_no_throttle(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_no_throttle(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	sessionidt s;
@@ -1662,7 +1634,7 @@ static int cmd_no_throttle(struct cli_def *cli, char *command, char **argv, int 
 	return CLI_OK;
 }
 
-static int cmd_debug(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_debug(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 
@@ -1726,7 +1698,7 @@ static int cmd_debug(struct cli_def *cli, char *command, char **argv, int argc)
 	return CLI_OK;
 }
 
-static int cmd_no_debug(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_no_debug(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 
@@ -1772,7 +1744,7 @@ static int cmd_no_debug(struct cli_def *cli, char *command, char **argv, int arg
 	return CLI_OK;
 }
 
-static int cmd_load_plugin(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_load_plugin(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i, firstfree = 0;
 
@@ -1807,7 +1779,7 @@ static int cmd_load_plugin(struct cli_def *cli, char *command, char **argv, int 
 	return CLI_OK;
 }
 
-static int cmd_remove_plugin(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_remove_plugin(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 
@@ -1961,7 +1933,7 @@ static char *duration(time_t secs)
 	return buf;
 }
 
-static int cmd_uptime(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_uptime(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	FILE *fh;
 	char buf[100], *p = buf, *loads[3];
@@ -1971,7 +1943,7 @@ static int cmd_uptime(struct cli_def *cli, char *command, char **argv, int argc)
 		return CLI_HELP_NO_ARGS;
 
 	fh = fopen("/proc/loadavg", "r");
-	fgets(buf, 100, fh);
+	p = fgets(buf, 100, fh);
 	fclose(fh);
 
 	for (i = 0; i < 3; i++)
@@ -1997,7 +1969,7 @@ static int cmd_uptime(struct cli_def *cli, char *command, char **argv, int argc)
 	return CLI_OK;
 }
 
-static int cmd_set(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_set(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 
@@ -2126,7 +2098,7 @@ int regular_stuff(struct cli_def *cli)
 }
 
 #ifdef BGP
-static int cmd_router_bgp(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_router_bgp(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int as;
 
@@ -2192,13 +2164,13 @@ static int find_bgp_neighbour(char const *name)
 	return new;
 }
 
-static int cmd_router_bgp_neighbour(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_router_bgp_neighbour(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	int keepalive;
 	int hold;
 
-    	if (CLI_HELP_REQUESTED)
+	if (CLI_HELP_REQUESTED)
 	{
 		switch (argc)
 		{
@@ -2212,6 +2184,7 @@ static int cmd_router_bgp_neighbour(struct cli_def *cli, char *command, char **a
 			return cli_arg_help(cli, 0,
 				"remote-as", "Set remote autonomous system number",
 				"timers",    "Set timers",
+				"update-source",    "Set source address to use for the BGP session",
 				NULL);
 
 		default:
@@ -2229,6 +2202,9 @@ static int cmd_router_bgp_neighbour(struct cli_def *cli, char *command, char **a
 				if (argc == 5 && !argv[4][1])
 					return cli_arg_help(cli, 1, NULL);
 			}
+
+			if (MATCH("update-source", argv[1]))
+				return cli_arg_help(cli, argc > 3, "A.B.C.D", "Source IP address", NULL);
 
 			return CLI_OK;
 		}
@@ -2266,9 +2242,30 @@ static int cmd_router_bgp_neighbour(struct cli_def *cli, char *command, char **a
 			snprintf(config->neighbour[i].name, sizeof(config->neighbour[i].name), "%s", argv[0]);
 			config->neighbour[i].keepalive = -1;
 			config->neighbour[i].hold = -1;
+			config->neighbour[i].update_source.s_addr = INADDR_ANY;
 		}
 
 		config->neighbour[i].as = as;
+		return CLI_OK;
+	}
+
+	if (MATCH("update-source", argv[1]))
+	{
+		struct in_addr addr;
+
+		if (!config->neighbour[i].name[0])
+		{
+			cli_error(cli, "Specify remote-as first");
+			return CLI_OK;
+		}
+
+		if (!inet_aton(argv[2], &addr))
+		{
+			cli_error(cli, "Cannot parse IP \"%s\"", argv[2]);
+			return CLI_OK;
+		}
+
+		config->neighbour[i].update_source = addr;
 		return CLI_OK;
 	}
 
@@ -2308,14 +2305,14 @@ static int cmd_router_bgp_neighbour(struct cli_def *cli, char *command, char **a
 	config->neighbour[i].keepalive = keepalive;
 	config->neighbour[i].hold = hold;
 
-    	return CLI_OK;
+	return CLI_OK;
 }
 
-static int cmd_router_bgp_no_neighbour(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_router_bgp_no_neighbour(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 
-    	if (CLI_HELP_REQUESTED)
+	if (CLI_HELP_REQUESTED)
 		return cli_arg_help(cli, argc > 0,
 			"A.B.C.D", "BGP neighbour address",
 			"NAME",    "BGP neighbour name",
@@ -2340,10 +2337,10 @@ static int cmd_router_bgp_no_neighbour(struct cli_def *cli, char *command, char 
 	}
 
 	memset(&config->neighbour[i], 0, sizeof(config->neighbour[i]));
-    	return CLI_OK;
+	return CLI_OK;
 }
 
-static int cmd_show_bgp(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_show_bgp(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	int hdr = 0;
@@ -2375,7 +2372,7 @@ static int cmd_show_bgp(struct cli_def *cli, char *command, char **argv, int arg
 
 		if (!hdr++)
 		{
-			cli_print(cli, "");
+			cli_print(cli, " ");
 			cli_print(cli, "Peer                  AS         Address "
 			    "State       Retries Retry in Route Pend    Timers");
 			cli_print(cli, "------------------ ----- --------------- "
@@ -2398,7 +2395,7 @@ static int cmd_show_bgp(struct cli_def *cli, char *command, char **argv, int arg
 	return CLI_OK;
 }
 
-static int cmd_suspend_bgp(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_suspend_bgp(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	char *addr;
@@ -2431,7 +2428,7 @@ static int cmd_suspend_bgp(struct cli_def *cli, char *command, char **argv, int 
 	return CLI_OK;
 }
 
-static int cmd_no_suspend_bgp(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_no_suspend_bgp(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	char *addr;
@@ -2465,7 +2462,7 @@ static int cmd_no_suspend_bgp(struct cli_def *cli, char *command, char **argv, i
 	return CLI_OK;
 }
 
-static int cmd_restart_bgp(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_restart_bgp(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	char *addr;
@@ -2593,12 +2590,12 @@ static int access_list(struct cli_def *cli, char **argv, int argc, int add)
 	return CLI_OK;
 }
 
-static int cmd_ip_access_list(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_ip_access_list(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	return access_list(cli, argv, argc, 1);
 }
 
-static int cmd_no_ip_access_list(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_no_ip_access_list(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	return access_list(cli, argv, argc, 0);
 }
@@ -2684,7 +2681,7 @@ static char const *show_access_list_rule(int extended, ip_filter_rulet *rule)
 	return buf;
 }
 
-static ip_filter_rulet *access_list_rule_ext(struct cli_def *cli, char *command, char **argv, int argc)
+static ip_filter_rulet *access_list_rule_ext(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	static ip_filter_rulet rule;
 	struct in_addr addr;
@@ -2919,7 +2916,7 @@ static ip_filter_rulet *access_list_rule_ext(struct cli_def *cli, char *command,
 	return &rule;
 }
 
-static ip_filter_rulet *access_list_rule_std(struct cli_def *cli, char *command, char **argv, int argc)
+static ip_filter_rulet *access_list_rule_std(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	static ip_filter_rulet rule;
 	struct in_addr addr;
@@ -3035,7 +3032,7 @@ static ip_filter_rulet *access_list_rule_std(struct cli_def *cli, char *command,
 	return &rule;
 }
 
-static int cmd_ip_access_list_rule(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_ip_access_list_rule(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	ip_filter_rulet *rule = ip_filters[filt].extended
@@ -3061,7 +3058,7 @@ static int cmd_ip_access_list_rule(struct cli_def *cli, char *command, char **ar
 	return CLI_OK;
 }
 
-static int cmd_filter(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_filter(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	sessionidt s;
 	int i;
@@ -3157,7 +3154,7 @@ static int cmd_filter(struct cli_def *cli, char *command, char **argv, int argc)
 	return CLI_OK;
 }
 
-static int cmd_no_filter(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_no_filter(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 	sessionidt s;
@@ -3202,7 +3199,7 @@ static int cmd_no_filter(struct cli_def *cli, char *command, char **argv, int ar
 	return CLI_OK;
 }
 
-static int cmd_show_access_list(struct cli_def *cli, char *command, char **argv, int argc)
+static int cmd_show_access_list(struct cli_def *cli, const char *command, char **argv, int argc)
 {
 	int i;
 
@@ -3227,7 +3224,7 @@ static int cmd_show_access_list(struct cli_def *cli, char *command, char **argv,
 		}
 
 		if (i)
-			cli_print(cli, "");
+			cli_print(cli, " ");
 
 		cli_print(cli, "%s IP access list %s",
 			ip_filters[f].extended ? "Extended" : "Standard",
@@ -3291,32 +3288,118 @@ static int cmd_add_free_network(struct cli_def *cli, char *command, char **argv,
 
 	add_free_network(argv[0], htonl(inet_addr(argv[1])), htonl(inet_addr(argv[2])));
 
-	return CLI_OK;
-}
-
 static int cmd_remove_free_network(struct cli_def *cli, char *command, char **argv, int argc)
 {
+ 
+    if (CLI_HELP_REQUESTED)
+        return cli_arg_help(cli, argc > 3,·
+                        "NAME", "Name of Free Traffic Zone",    
+                    "HOSTIP", "Starting IP of network",
+                    "NETMASK", "Network mask",
+                    NULL);
+ 
+    if (argc < 3)
+    {
+        cli_error(cli, "Please specify a name, host address, and netmask.");
+        return CLI_OK;
+    }
+    
+    //FIXME: Add checking of zone string.
+ 
+    if (remove_free_network(argv[0], htonl(inet_addr(argv[1])), htonl(inet_addr(argv[2]))))
+        return CLI_OK;
+ 
+    cli_error(cli, "That free network was not found. Try using show free-networks first.");
+ 
+    return CLI_OK;
+}
+#endif //freetraffic
+
+static int cmd_shutdown(struct cli_def *cli, const char *command, char **argv, int argc)
+{
+	if (CLI_HELP_REQUESTED)
+		return CLI_HELP_NO_ARGS;
+
+	kill(getppid(), SIGQUIT);
+	return CLI_OK;
+}
+
+static int cmd_reload(struct cli_def *cli, const char *command, char **argv, int argc)
+{
+	if (CLI_HELP_REQUESTED)
+		return CLI_HELP_NO_ARGS;
+
+	kill(getppid(), SIGHUP);
+	return CLI_OK;
+}
+
+static int cmd_setforward(struct cli_def *cli, const char *command, char **argv, int argc)
+{
+	int ret;
 
 	if (CLI_HELP_REQUESTED)
-		return cli_arg_help(cli, argc > 3, 
-			       	    "NAME", "Name of Free Traffic Zone",	
-				    "HOSTIP", "Starting IP of network",
-				    "NETMASK", "Network mask",
-				    NULL);
-
-	if (argc < 3)
 	{
-		cli_error(cli, "Please specify a name, host address, and netmask.");
+		switch (argc)
+		{
+		case 1:
+			return cli_arg_help(cli, 0,
+				"MASK", "Users mask to forward (ex: myISP@operator.com)", NULL);
+
+		case 2:
+			return cli_arg_help(cli, 0,
+				"IP", "IP of the remote LNS(ex: 64.64.64.64)", NULL);
+
+		case 3:
+			return cli_arg_help(cli, 0,
+				"PORT", "Port of the remote LNS (ex: 1701)", NULL);
+
+		case 4:
+			return cli_arg_help(cli, 0,
+				"SECRET", "l2tp secret of the remote LNS (ex: mysecretpsw)", NULL);
+
+		default:
+			return cli_arg_help(cli, argc > 1, NULL);
+		}
+	}
+
+	if (argc != 4)
+	{
+		cli_error(cli, "Specify variable and value");
 		return CLI_OK;
 	}
-	
-	//FIXME: Add checking of zone string.
 
-	if (remove_free_network(argv[0], htonl(inet_addr(argv[1])), htonl(inet_addr(argv[2]))))
-		return CLI_OK;
+	// lac_addremotelns(mask, IP_RemoteLNS, Port_RemoteLNS, SecretRemoteLNS)
+	ret = lac_addremotelns(argv[0], argv[1], argv[2], argv[3]);
 
-	cli_error(cli, "That free network was not found. Try using show free-networks first.");
+	if (ret)
+	{
+		cli_print(cli, "setforward %s %s %s %s", argv[0], argv[1], argv[2], argv[3]);
+		if (ret == 2)
+			cli_print(cli, "%s Updated, the tunnel must be dropped", argv[0]);
+	}
+	else
+		cli_error(cli, "ERROR setforward %s %s %s %s", argv[0], argv[1], argv[2], argv[3]);
 
 	return CLI_OK;
 }
-#endif //freetraffic
+
+static int cmd_show_rmtlnsconf(struct cli_def *cli, const char *command, char **argv, int argc)
+{
+	confrlnsidt idrlns;
+	char strdisp[1024];
+
+	if (CLI_HELP_REQUESTED)
+	{
+		return cli_arg_help(cli, 0, "remotelns-conf", "Show a list of remote LNS configurations", NULL);
+	}
+
+	for (idrlns = 0; idrlns < MAXRLNSTUNNEL; idrlns++)
+	{
+		if (lac_cli_show_remotelns(idrlns, strdisp) != 0)
+			cli_print(cli, "%s", strdisp);
+		else
+			break;
+	}
+
+	return CLI_OK;
+}
