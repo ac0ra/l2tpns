@@ -599,6 +599,12 @@ static int cmd_show_session(struct cli_def *cli, const char *command, char **arg
 	{
 		uint32_t rem_time;
 		if (!session[i].opened) continue;
+
+      if (!session[i].opened) continue;
+        int t = (session[i].throttle_in || session[i].throttle_out);  //req for showing throttle speed
+        if (t) {
+            sprintf(tspeed, "%.0dkbps/%.0dkbps", session[i].throttle_in, session[i].throttle_out);
+        }
 		if (session[i].bundle && bundle[session[i].bundle].num_of_links > 1)
 			rem_time = session[i].timeout ? (session[i].timeout - bundle[session[i].bundle].online_time) : 0;
 		else
@@ -643,12 +649,12 @@ static int cmd_show_tunnels(struct cli_def *cli, const char *command, char **arg
 	{
 		if (argc > 1)
 			return cli_arg_help(cli, 1,
-				"<1-%d>", config->max_tunnels-1, "Show specific tunnel by id",
+				"<1-%d>", MAXTUNNEL-1, "Show specific tunnel by id",
 				NULL);
 
 		return cli_arg_help(cli, 1,
 			"all", "Show all tunnels, including unused",
-			"<1-%d>", config->max_tunnels-1, "Show specific tunnel by id",
+			"<1-%d>", MAXTUNNEL-1, "Show specific tunnel by id",
 			NULL);
 	}
 
@@ -667,7 +673,7 @@ static int cmd_show_tunnels(struct cli_def *cli, const char *command, char **arg
 				char s[65535] = {0};
 				unsigned int t;
 				t = atoi(argv[i]);
-				if (t <= 0 || t >= config->max_tunnels)
+				if (t <= 0 || t >= MAXTUNNEL)
 				{
 					cli_print(cli, "Invalid tunnel id \"%s\"", argv[i]);
 					continue;
@@ -701,7 +707,7 @@ static int cmd_show_tunnels(struct cli_def *cli, const char *command, char **arg
 			"State",
 			"Sessions");
 
-	for (i = 1; i < config->max_tunnels; i++)
+	for (i = 1; i < MAXTUNNEL; i++)
 	{
 		int sessions = 0;
 		if (!show_all && (!tunnel[i].ip || tunnel[i].die)) continue;
@@ -1257,7 +1263,7 @@ static int cmd_drop_tunnel(struct cli_def *cli, const char *command, char **argv
 
 	if (CLI_HELP_REQUESTED)
 		return cli_arg_help(cli, argc > 1,
-			"<1-%d>", config->max_tunnels-1, "Tunnel id to drop", NULL);
+			"<1-%d>", MAXTUNNEL-1, "Tunnel id to drop", NULL);
 
 	if (!config->cluster_iam_master)
 	{
@@ -1275,9 +1281,9 @@ static int cmd_drop_tunnel(struct cli_def *cli, const char *command, char **argv
 
 	for (i = 0; i < argc; i++)
 	{
-		if ((t = atol(argv[i])) <= 0 || (t >= config->max_tunnels))
+		if ((t = atol(argv[i])) <= 0 || (t >= MAXTUNNEL))
 		{
-			cli_error(cli, "Invalid tunnel ID (1-%d)", config->max_tunnels-1);
+			cli_error(cli, "Invalid tunnel ID (1-%d)", MAXTUNNEL-1);
 			continue;
 		}
 
@@ -3287,23 +3293,24 @@ static int cmd_add_free_network(struct cli_def *cli, char *command, char **argv,
 	//FIXME: Add checking of zone string.
 
 	add_free_network(argv[0], htonl(inet_addr(argv[1])), htonl(inet_addr(argv[2])));
+}
 
 static int cmd_remove_free_network(struct cli_def *cli, char *command, char **argv, int argc)
 {
  
     if (CLI_HELP_REQUESTED)
-        return cli_arg_help(cli, argc > 3,·
-                        "NAME", "Name of Free Traffic Zone",    
+        return cli_arg_help(cli, argc > 3,
+                    "NAME", "Name of Free Traffic Zone",
                     "HOSTIP", "Starting IP of network",
                     "NETMASK", "Network mask",
                     NULL);
- 
+
     if (argc < 3)
     {
         cli_error(cli, "Please specify a name, host address, and netmask.");
         return CLI_OK;
     }
-    
+
     //FIXME: Add checking of zone string.
  
     if (remove_free_network(argv[0], htonl(inet_addr(argv[1])), htonl(inet_addr(argv[2]))))

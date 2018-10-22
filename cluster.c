@@ -823,7 +823,7 @@ static void cluster_check_sessions(int highsession, int freesession_ptr, int hig
 		// Clear out defined tunnels, counting the number of
 		// undefs remaining.
 	config->cluster_undefined_tunnels = 0;
-	for (i = 1 ; i < config->max_tunnels; ++i) {
+	for (i = 1 ; i < MAXTUNNEL; ++i) {
 		if (i > hightunnel) {
 			if (tunnel[i].state == TUNNELUNDEF) tunnel[i].state = TUNNELFREE; // Defined.
 			continue;
@@ -1359,8 +1359,8 @@ static int cluster_recv_bundle(int more, uint8_t *p)
 
 static int cluster_recv_tunnel(int more, uint8_t *p)
 {
-	if (more >= config->max_tunnels) {
-		LOG(0, 0, 0, "DANGER: Received a tunnel session id > config->max_tunnels!\n");
+	if (more >= MAXTUNNEL) {
+		LOG(0, 0, 0, "DANGER: Received a tunnel session id > MAXTUNNEL!\n");
 		return -1;
 	}
 

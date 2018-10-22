@@ -2614,7 +2614,7 @@ void processudp(uint8_t *buf, int len, struct sockaddr_in *addr, uint16_t indexu
 		STAT(tunnel_rx_errors);
 		return;
 	}
-	if (t >= config->max_tunnels)
+	if (t >= MAXTUNNEL)
 	{
 		LOG(1, s, t, "Received UDP packet with invalid tunnel ID\n");
 		STAT(tunnel_rx_errors);
@@ -4114,7 +4114,7 @@ static int still_busy(void)
 		    	int i;
 
 			LOG(1, 0, 0, "Dropping sessions and tunnels\n");
-			for (i = 1; i < config->max_tunnels; i++)
+			for (i = 1; i < MAXTUNNEL; i++)
 				if (tunnel[i].ip || tunnel[i].state)
 					tunnelshutdown(i, "L2TPNS Closing", 6, 0, 0);
 
@@ -5149,104 +5149,76 @@ void add_ip_range(char* buf, uint8_t x,uint8_t y) {
 }
 
 // Initialize the IP address pool
-void initippool(uint8_t x,uint8_t y)
-{
-	FILE *f;
-	char *p;
-	char buf[4096];
-        char filename[FILENAME_MAX];
 
-        if (x && y) 
+static void initippool()
+{    
+    FILE *f;
+    char *p;
+    char buf[4096];
+    memset(ip_address_pool, 0, sizeof(ip_address_pool));
+
+    if (!(f = fopen(IPPOOLFILE, "r")))
+    {
+        LOG(0, 0, 0, "Can't load pool file " IPPOOLFILE ": %s\n", strerror(errno));
+        exit(1);
+    }
+
+    while (ip_pool_size < MAXIPPOOL && fgets(buf, 4096, f))
+    {
+        char *pool = buf;
+        buf[4095] = 0;  // Force it to be zero terminated/
+
+        if (*buf == '#' || *buf == '\n')
+            continue; // Skip comments / blank lines
+        if ((p = (char *)strrchr(buf, '\n'))) *p = 0;
+        if ((p = (char *)strchr(buf, ':')))
         {
-        	snprintf(filename,sizeof(filename)-1,"%s.%c%c",IPPOOLFILE,x,y);
+            in_addr_t src;
+            *p = '\0';
+            src = inet_addr(buf);
+            if (src == INADDR_NONE)
+            {
+                LOG(0, 0, 0, "Invalid address pool IP %s\n", buf);
+                exit(1);
+            }
+            // This entry is for a specific IP only
+            if (src != config->bind_address)
+                continue;
+            *p = ':';
+            pool = p+1;
         }
-        else if (!x && !y)
+        if ((p = (char *)strchr(pool, '/')))
         {
-        	strncpy(filename,IPPOOLFILE,sizeof(filename)-1);
+            // It's a range
+            int numbits = 0;
+            in_addr_t start = 0;
+
+            LOG(2, 0, 0, "Adding IP address range %s\n", buf);
+            *p++ = 0;
+            if (!*p || !(numbits = atoi(p)))
+            {
+                LOG(0, 0, 0, "Invalid pool range %s\n", buf);
+                continue;
+            }
+            start = ntohl(inet_addr(pool));
+
+            // Add a static route for this pool
+            LOG(5, 0, 0, "Adding route for address pool %s/%d\n",
+                fmtaddr(htonl(start), 0), numbits);
+
+            routeset(0, start, numbits, 0, 1);
+
+            add_to_ip_pool(start, numbits);
         }
         else
         {
-                return;
+            // It's a single ip address
+            add_to_ip_pool(ntohl(inet_addr(pool)), 0);
         }
-
-	if (!(f = fopen(filename, "r")))
-	{
-
-         // I'm commenting out this log line for fear of spamming the log with
-         // non errros (with strange chars) everytime it loads up.
-         //LOG(0, 0, 0, "Can't load pool file %s: %s\n", filename,strerror(errno));
-          return;
-	}
-
-        if (ip_address_pool[x][y] == NULL) 
-        	malloc_pool(x,y);
-
-	memset(ip_address_pool[x][y], 0, sizeof(ip_address_pool[x][y]));
-
-
-        // Why does this work? There is no reason why each line has to be 4096 bytes long
-        // so why does the code assume that if we suck in a block of code that starts with a
-        // # we can safely ignore it?
-
-	while (ip_pool_size[x][y] < MAXIPPOOL && fgets(buf, 4096, f))
-	{
-		char *pool = buf;
-		buf[4095] = 0;	// Force it to be zero terminated/
-
-		if (*buf == '#' || *buf == '\n')
-			continue; // Skip comments / blank lines
-
-                // Remove anything following the last newline.
-		if ((p = (char *)strrchr(buf, '\n'))) *p = 0;
-		if ((p = (char *)strchr(buf, ':')))
-		{
-			in_addr_t src;
-			*p = '\0';
-			src = inet_addr(buf);
-			if (src == INADDR_NONE)
-			{
-				LOG(0, 0, 0, "Invalid address pool IP %s\n", buf);
-				exit(1);
-			}
-			// This entry is for a specific IP only
-			if (src != config->bind_address)
-				continue;
-			*p = ':';
-			pool = p+1;
-		}
-		if ((p = (char *)strchr(pool, '/')))
-		{
-			// It's a range
-			int numbits = 0;
-			in_addr_t start = 0;
-
-			LOG(2, 0, 0, "Adding IP address range %s\n", buf);
-			*p++ = 0;
-			if (!*p || !(numbits = atoi(p)))
-			{
-				LOG(0, 0, 0, "Invalid pool range %s\n", buf);
-				continue;
-			}
-			start = ntohl(inet_addr(pool));
-
-			// Add a static route for this pool
-			LOG(5, 0, 0, "Adding route for address pool %s/%d\n",
-				fmtaddr(htonl(start), 0), numbits);
-
-			routeset(0, start, numbits, 0, 1);
-
-			add_to_ip_pool(start, numbits);
-		}
-		else
-		{
-			// It's a single ip address
-                  add_to_ip_pool(ntohl(inet_addr(pool)), 0,x,y);
-		}
-	}
-	fclose(f);
-	LOG(1, 0, 0, "IP address pool is %d addresses\n", (ip_pool_size[x][y] - 1));
+    } 
+    fclose(f);
+    LOG(1, 0, 0, "IP address pool is %d addresses\n", ip_pool_size - 1);
 }
-
 void snoop_send_packet(uint8_t *packet, uint16_t size, in_addr_t destination, uint16_t port)
 {
 	struct sockaddr_in snoop_addr = {0};
@@ -5718,11 +5690,11 @@ static void update_config()
 	else if (config->l2tp_mtu > MAXMTU)	config->l2tp_mtu = MAXMTU;
 
 	// Set the number of tunnels
-	if (config->max_tunnels <= 0) {		
-		config->max_tunnels = DEFAULTTUNNELS;
-	} else if (config->max_tunnels > MAXTUNNELS) {
+	if (MAXTUNNEL <= 0) {		
+		MAXTUNNEL = DEFAULTTUNNELS;
+	} else if (MAXTUNNEL > MAXTUNNELS) {
 		LOG(0,0,0, "Warning, cannot support more than MAXTUNNELS tunnels.\n");
-		config->max_tunnels = MAXTUNNELS;
+		MAXTUNNEL = MAXTUNNELS;
 	}
 
 	//Set idle timeout
@@ -6208,7 +6180,7 @@ int load_session(sessionidt s, sessiont *new)
 
 		// Sanity checks.
 	if (new->ip_pool_index >= MAXIPPOOL ||
-		new->tunnel >= config->max_tunnels)
+		new->tunnel >= MAXTUNNEL)
 	{
 		LOG(0, s, 0, "Strange session update received!\n");
 			// FIXME! What to do here?
@@ -6698,7 +6670,7 @@ static void processcontrol(uint8_t *buf, int len, struct sockaddr_in *addr, int 
 static tunnelidt new_tunnel()
 {
 	tunnelidt i;
-	for (i = 1; i < config->max_tunnels; i++)
+	for (i = 1; i < MAXTUNNEL; i++)
 	{
 		if ((tunnel[i].state == TUNNELFREE) && (i != TUNNEL_ID_PPPOE))
 		{
