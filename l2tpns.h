@@ -15,13 +15,6 @@
 #include <sys/types.h>
 #include <libcli.h>
 
-<<<<<<< HEAD
-#define VERSION	"2.1.24"
-
-// Limits
-#define MAXTUNNELS  	65535	 	// We cannot support any more than 65535, so we check.
-#define DEFAULTTUNNELS 	500		// Default of 500 tunnels supported.
-=======
 #define VERSION	"2.2.1.2fdn3.19"
 
 // Limits
