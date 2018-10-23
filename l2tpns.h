@@ -1053,7 +1053,7 @@ extern tunnelt *tunnel;
 extern bundlet *bundle;
 extern sessiont *session;
 extern sessionlocalt *sess_local;
-extern ippoolt *ip_address_pool[256][256];
+extern ippoolt *ip_address_pool;
 #define sessionfree (session[0].next)
 
 

@@ -5025,7 +5025,7 @@ static void add_to_ip_pool(in_addr_t addr, int prefixlen)
 
 	addr &= 0xffffffff << (32 - prefixlen);
 
-	if (ip_pool_size[x][y] >= MAXIPPOOL)	// Pool is full!
+	if (ip_pool_size >= MAXIPPOOL)	// Pool is full!
 		return ;
 
 	for (i = addr ; i < addr+(1<<(32-prefixlen)); ++i)
@@ -5033,124 +5033,125 @@ static void add_to_ip_pool(in_addr_t addr, int prefixlen)
 		if ((i & 0xff) == 0 || (i&0xff) == 255)
 			continue;	// Skip 0 and broadcast addresses.
 
-		ip_address_pool[x][y][ip_pool_size[x][y]].address  = i;
-		ip_address_pool[x][y][ip_pool_size[x][y]].assigned = 0;
-		++ip_pool_size[x][y];
-		if (ip_pool_size[x][y] >= MAXIPPOOL)
+		ip_address_pool[ip_pool_size].address = i;
+		ip_address_pool[ip_pool_size].assigned = 0;
+		++ip_pool_size;
+		if (ip_pool_size >= MAXIPPOOL)
 		{
 			LOG(0, 0, 0, "Overflowed IP pool adding %s\n", fmtaddr(htonl(addr), 0));
 			return;
 		}
 	}
 }
-
-void add_ip_range(char* buf, uint8_t x,uint8_t y) {
-	char *p;
-	char *pool = buf;
+// TO BE REMOVED
+// void add_ip_range(char* buf, uint8_t x,uint8_t y) {
+//	char *p;
+//	char *pool = buf;
 	// Remove anything following the last newline.
-	if ((p = (char *)strrchr(buf, '\n'))) *p = 0;
-	if ((p = (char *)strchr(pool, '/')))
-	{
+//	if ((p = (char *)strrchr(buf, '\n'))) *p = 0;
+//	if ((p = (char *)strchr(pool, '/')))
+//	{
 		// It's a range
-		int numbits = 0;
-		in_addr_t start = 0, mask = 0;
+//		int numbits = 0;
+//		in_addr_t start = 0, mask = 0;
 
-		LOG(2, 0, 0, "Adding IP address range %s\n", buf);
-		*p++ = 0;
-		if (!*p || !(numbits = atoi(p)))
-		{
-			LOG(0, 0, 0, "Invalid pool range %s\n", buf);
-			return;
-		}
-		start = ntohl(inet_addr(pool));
-		mask = (in_addr_t) (pow(2, numbits) - 1) << (32 - numbits);
+//		LOG(2, 0, 0, "Adding IP address range %s\n", buf);
+//		*p++ = 0;
+//		if (!*p || !(numbits = atoi(p)))
+//		{
+//			LOG(0, 0, 0, "Invalid pool range %s\n", buf);
+//			return;
+//		}
+//		start = ntohl(inet_addr(pool));
+//		mask = (in_addr_t) (pow(2, numbits) - 1) << (32 - numbits);
 
 		// Add a static route for this pool
-		LOG(5, 0, 0, "Adding route for address pool %s/%u\n",
-			fmtaddr(htonl(start), 0), 32 + mask);
+//		LOG(5, 0, 0, "Adding route for address pool %s/%u\n",
+//			fmtaddr(htonl(start), 0), 32 + mask);
 
-		routeset(0, start, mask, 0, 1);
+//		routeset(0, start, mask, 0, 1);
 
-		add_to_ip_pool(start, mask,x,y);
-	}
-	else
-	{
+//		add_to_ip_pool(start, mask,x,y);
+//	}
+//	else
+//	{
 		// It's a single ip address
-	  add_to_ip_pool(ntohl(inet_addr(pool)), 0,x,y);
-	}
-}
+//	  add_to_ip_pool(ntohl(inet_addr(pool)), 0,x,y);
+//	}
+//}
 
 // Initialize the IP address pool
 
 static void initippool()
-{    
-    FILE *f;
-    char *p;
-    char buf[4096];
-    memset(ip_address_pool, 0, sizeof(ip_address_pool));
+{
+	FILE *f;
+	char *p;
+	char buf[4096];
+	memset(ip_address_pool, 0, sizeof(ip_address_pool));
 
-    if (!(f = fopen(IPPOOLFILE, "r")))
-    {
-        LOG(0, 0, 0, "Can't load pool file " IPPOOLFILE ": %s\n", strerror(errno));
-        exit(1);
-    }
+	if (!(f = fopen(IPPOOLFILE, "r")))
+	{
+		LOG(0, 0, 0, "Can't load pool file " IPPOOLFILE ": %s\n", strerror(errno));
+		exit(1);
+	}
 
-    while (ip_pool_size < MAXIPPOOL && fgets(buf, 4096, f))
-    {
-        char *pool = buf;
-        buf[4095] = 0;  // Force it to be zero terminated/
+	while (ip_pool_size < MAXIPPOOL && fgets(buf, 4096, f))
+	{
+		char *pool = buf;
+		buf[4095] = 0;	// Force it to be zero terminated/
 
-        if (*buf == '#' || *buf == '\n')
-            continue; // Skip comments / blank lines
-        if ((p = (char *)strrchr(buf, '\n'))) *p = 0;
-        if ((p = (char *)strchr(buf, ':')))
-        {
-            in_addr_t src;
-            *p = '\0';
-            src = inet_addr(buf);
-            if (src == INADDR_NONE)
-            {
-                LOG(0, 0, 0, "Invalid address pool IP %s\n", buf);
-                exit(1);
-            }
-            // This entry is for a specific IP only
-            if (src != config->bind_address)
-                continue;
-            *p = ':';
-            pool = p+1;
-        }
-        if ((p = (char *)strchr(pool, '/')))
-        {
-            // It's a range
-            int numbits = 0;
-            in_addr_t start = 0;
+		if (*buf == '#' || *buf == '\n')
+			continue; // Skip comments / blank lines
+		if ((p = (char *)strrchr(buf, '\n'))) *p = 0;
+		if ((p = (char *)strchr(buf, ':')))
+		{
+			in_addr_t src;
+			*p = '\0';
+			src = inet_addr(buf);
+			if (src == INADDR_NONE)
+			{
+				LOG(0, 0, 0, "Invalid address pool IP %s\n", buf);
+				exit(1);
+			}
+			// This entry is for a specific IP only
+			if (src != config->bind_address)
+				continue;
+			*p = ':';
+			pool = p+1;
+		}
+		if ((p = (char *)strchr(pool, '/')))
+		{
+			// It's a range
+			int numbits = 0;
+			in_addr_t start = 0;
 
-            LOG(2, 0, 0, "Adding IP address range %s\n", buf);
-            *p++ = 0;
-            if (!*p || !(numbits = atoi(p)))
-            {
-                LOG(0, 0, 0, "Invalid pool range %s\n", buf);
-                continue;
-            }
-            start = ntohl(inet_addr(pool));
+			LOG(2, 0, 0, "Adding IP address range %s\n", buf);
+			*p++ = 0;
+			if (!*p || !(numbits = atoi(p)))
+			{
+				LOG(0, 0, 0, "Invalid pool range %s\n", buf);
+				continue;
+			}
+			start = ntohl(inet_addr(pool));
 
-            // Add a static route for this pool
-            LOG(5, 0, 0, "Adding route for address pool %s/%d\n",
-                fmtaddr(htonl(start), 0), numbits);
+			// Add a static route for this pool
+			LOG(5, 0, 0, "Adding route for address pool %s/%d\n",
+				fmtaddr(htonl(start), 0), numbits);
 
-            routeset(0, start, numbits, 0, 1);
+			routeset(0, start, numbits, 0, 1);
 
-            add_to_ip_pool(start, numbits);
-        }
-        else
-        {
-            // It's a single ip address
-            add_to_ip_pool(ntohl(inet_addr(pool)), 0);
-        }
-    } 
-    fclose(f);
-    LOG(1, 0, 0, "IP address pool is %d addresses\n", ip_pool_size - 1);
+			add_to_ip_pool(start, numbits);
+		}
+		else
+		{
+			// It's a single ip address
+			add_to_ip_pool(ntohl(inet_addr(pool)), 0);
+		}
+	}
+	fclose(f);
+	LOG(1, 0, 0, "IP address pool is %d addresses\n", ip_pool_size - 1);
 }
+
 void snoop_send_packet(uint8_t *packet, uint16_t size, in_addr_t destination, uint16_t port)
 {
 	struct sockaddr_in snoop_addr = {0};
@@ -5174,22 +5175,22 @@ void snoop_send_packet(uint8_t *packet, uint16_t size, in_addr_t destination, ui
 static int dump_session(FILE **f, sessiont *s)
 {
 	LOG(5, 0, 0, "Method dump_session: precondition dump:\n s->opened %u \n IP: %d \ncinDelta: %u \ncoutdelta: %u \nusername: %s \nwalledGardenFlag: %hx \n", s->opened, s->ip, s->cin_delta, s->cout_delta, s->user, s->walled_garden);
-	
 	if (!s->opened || (!s->ip && !s->forwardtosession) || !(s->cin_delta || s->cout_delta) || !*s->user)
 		return 1;
-
-        time_t now = time(NULL);
 
 	if (!*f)
 	{
 		char filename[1024];
 		char timestr[64];
+		time_t now = time(NULL);
 
 		strftime(timestr, sizeof(timestr), "%Y%m%d%H%M%S", localtime(&now));
 
 		if (s->walled_garden) {
 			snprintf(filename, sizeof(filename), "%s/%s", config->garden_accounting_dir, timestr);
-		} else {
+		}
+		else
+		{
 			snprintf(filename, sizeof(filename), "%s/%s", config->accounting_dir, timestr);
 		}
 
@@ -5198,7 +5199,8 @@ static int dump_session(FILE **f, sessiont *s)
 			LOG(0, 0, 0, "Can't write accounting info to %s: %s\n", filename, strerror(errno));
 			return 0;
 		}
-        LOG(3, 0, 0, "Dumping accounting information to %s\n", filename);
+
+		LOG(3, 0, 0, "Dumping accounting information to %s\n", filename);
 		if (s->walled_garden) {
 			fprintf(*f, "# dslwatch.pl dump file V1.01\n"
 				"# host: %s\n"
@@ -5207,10 +5209,10 @@ static int dump_session(FILE **f, sessiont *s)
 				"# uptime: %ld\n"
 				"# format: username ip qos uptxoctets downrxoctets usage_interval walled_garden\n",
 				hostname,
-				fmtaddr(config->iftun_n_address[tunnel[s->tunnel].indexudp] ? config->iftun_n_address[tunnel[s->tunnel].indexudp] : my_address, 0)
+				fmtaddr(config->iftun_n_address[tunnel[s->tunnel].indexudp] ? config->iftun_n_address[tunnel[s->tunnel].indexudp] : my_address, 0),
                 now,
 				now - basetime);
-		} 
+		}
 		if(config->account_all_origin)
 		{
 		fprintf(*f, "# dslwatch.pl dump file V1.01\n"
@@ -5241,22 +5243,24 @@ static int dump_session(FILE **f, sessiont *s)
 
 
 	LOG(4, 0, 0, "Dumping accounting information for %s\n", s->user);
-	
     // The memory is zero filled on initalization so this is safe.
-    if (!s->last_dump)
-        s->last_dump = s->opened;
-    
-    if(config->account_all_origin) {
-	fprintf(*f, "%s %s %d %u %u %s\n",
+	if (!s->last_dump)
+		s->last_dump = s->opened;
+
+	if(config->account_all_origin)
+    {
+	fprintf(*f, "%s %s %d %u %u %s %u\n",
 		s->user,						// username
 		fmtaddr(htonl(s->ip), 0),				// ip
 		(s->throttle_in || s->throttle_out) ? 2 : 1,		// qos
 		(uint32_t) s->cin_delta,				// uptxoctets
 		(uint32_t) s->cout_delta,				// downrxoctets
-		(s->tunnel == TUNNEL_ID_PPPOE)?"P":(tunnel[s->tunnel].isremotelns?"R":"L"));	// Origin
-        (uint32_t) (now - s->last_dump),
+		(s->tunnel == TUNNEL_ID_PPPOE)?"P":(tunnel[s->tunnel].isremotelns?"R":"L")),	// Origin
+		(uint32_t) (now - s->last_dump);
 
-	} else if (s->walled_garden) {
+	}
+	else if (s->walled_garden)
+	{
 	fprintf(*f, "%s %s %d %u %u %u %s\n",
 			s->user,						// username
 			fmtaddr(htonl(s->ip), 0),				// ip
@@ -5265,26 +5269,28 @@ static int dump_session(FILE **f, sessiont *s)
 			(uint32_t) s->cout_delta,				// downrxoctets
 			(uint32_t) (now - s->last_dump),
 			s->walled_garden_name);		                        // walled garden name 
-	} else if (!tunnel[s->tunnel].isremotelns && (s->tunnel != TUNNEL_ID_PPPOE)) {
-	fprintf(*f, "%s %s %d %u %u\n",
+	}
+	else if (!tunnel[s->tunnel].isremotelns && (s->tunnel != TUNNEL_ID_PPPOE))
+	{
+	fprintf(*f, "%s %s %d %u %u %u\n",
 		s->user,						// username
 		fmtaddr(htonl(s->ip), 0),				// ip
 		(s->throttle_in || s->throttle_out) ? 2 : 1,		// qos
 		(uint32_t) s->cin_delta,				// uptxoctets
-		(uint32_t) s->cout_delta);				// downrxoctets
-        (uint32_t) (now - s->last_dump);                       // time_used
+		(uint32_t) s->cout_delta),				// downrxoctets
+		(uint32_t) (now - s->last_dump);		// time_used
 	}
 
 
 #ifdef FREETRAFFIC
 	if (s->free_traffic) {
-		char ft_filename[1024]; 
+		char ft_filename[1024];
 		char ft_timestr[64];
 		FILE *ft = NULL;
 
 		strftime(ft_timestr, sizeof(ft_timestr), "%Y%m%d%H%M%S", localtime(&now));
 		snprintf(ft_filename, sizeof(ft_filename), "%s.%s/%s", config->freetraffic_accounting_dir, s->free_traffic, ft_timestr);
-		
+
 		if (!(ft = fopen(ft_filename, "w")))
 		{
 			LOG(0, 0, 0, "Can't write accounting info to %s: %s\n", ft_filename, strerror(errno));
@@ -5342,7 +5348,6 @@ int main(int argc, char *argv[])
 	int i;
 	int optdebug = 0;
 	char *optconfig = CONFIGFILE;
-        int x,y;
 
 	time(&basetime);             // start clock
 
@@ -5397,6 +5402,7 @@ int main(int argc, char *argv[])
 
 	LOG(0, 0, 0, "L2TPNS version " VERSION "\n");
 	LOG(0, 0, 0, "Copyright (c) 2012, 2013, 2014 ISP FDN & SAMESWIRELESS\n");
+	LOG(0, 0, 0, "Copyright (c) 2006 - 2018, iSeek Communications Pty Ltd - GPL licensed");
 	LOG(0, 0, 0, "Copyright (c) 2003, 2004, 2005, 2006 Optus Internet Engineering\n");
 	LOG(0, 0, 0, "Copyright (c) 2002 FireBrick (Andrews & Arnold Ltd / Watchfront Ltd) - GPL licenced\n");
 	{
@@ -5622,32 +5628,22 @@ static void update_config()
 	else if (config->l2tp_mtu > MAXMTU)	config->l2tp_mtu = MAXMTU;
 
 	// Set the number of tunnels
-	if (MAXTUNNEL <= 0) {		
-		MAXTUNNEL = DEFAULTTUNNELS;
-	} else if (MAXTUNNEL > MAXTUNNELS) {
-		LOG(0,0,0, "Warning, cannot support more than MAXTUNNELS tunnels.\n");
-		MAXTUNNEL = MAXTUNNELS;
-	}
-
-	//Set idle timeout
-	if (config->lcp_idle_timeout <= 0) {
-		config->lcp_idle_timeout = DEFAULT_IDLE_TIMEOUT;
-	}
-
-	//Set echo timeout
-	if (config->lcp_echo_timeout <= 0) {
-		config->lcp_echo_timeout = DEFAULT_ECHO_TIMEOUT;
-	}
+	//if (MAXTUNNEL <= 0) {
+	//	MAXTUNNEL = DEFAULTTUNNELS;
+	//} else if (MAXTUNNEL > MAXTUNNELS) {
+	//	LOG(0,0,0, "Warning, cannot support more than MAXTUNNELS tunnels.\n");
+	//	MAXTUNNEL = MAXTUNNELS;
+	//}
 
 	// reset MRU/MSS globals
 	MRU = config->l2tp_mtu - L2TP_HDRS;
 
-	// PPPoE MRU logic	
+	// PPPoE MRU logic
 	// e.g: set pppoe_mru 1500
 	if (config->pppoe_mru > 0) {
 		MRU = config->pppoe_mru;
-	} 
-	// or is unset or equal to 0 
+	}
+	// or is unset or equal to 0
 	else {
 		if (MRU > PPPoE_MRU)
 			MRU = PPPoE_MRU;
@@ -5985,7 +5981,6 @@ int sessionsetup(sessionidt s, tunnelidt t)
 		{
 			LOG(0, s, t, "   No IP allocated.  The IP address pool is FULL!\n");
 			sessionshutdown(s, "No IP addresses available.", CDN_TRY_ANOTHER, TERM_SERVICE_UNAVAILABLE);
-			
 			return 0;
 		}
 		LOG(3, s, t, "   No IP allocated.  Assigned %s from pool\n",
@@ -6013,10 +6008,14 @@ int sessionsetup(sessionidt s, tunnelidt t)
 				if (!config->allow_duplicate_ip) {
 					if (config->suicide_duplicate_ip) {
 						sessionkill(s, "Duplicate IP. Suiciding", TERM_CALLBACK);
-					} else {
+					}
+					else
+					{
 						sessionkill(i, "Duplicate IP address", TERM_ADMIN_RESET);
 					}
-				} else {
+				}
+				else
+				{
 					if (config->suicide_duplicate_ip) {
 						sessionkill(s, "Duplicate IP. Suiciding", TERM_CALLBACK);
 					}
