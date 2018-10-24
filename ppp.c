@@ -1722,7 +1722,7 @@ void processipv6cp(sessionidt s, tunnelidt t, uint8_t *p, uint16_t l)
 	}
 }
 
-static void update_sessions_in_stat(sessionidt s, uint16_t l)
+static void update_sessions_in_stat(sessionidt s, uint16_t l, uint8_t *p)
 {
 	bundleidt b = session[s].bundle;
 	if (!b)
@@ -1862,7 +1862,7 @@ void processipin(sessionidt s, tunnelidt t, uint8_t *p, uint16_t l)
 	}
 
 
-	update_sessions_in_stat(s, l);
+	update_sessions_in_stat(s, l, p);
 
 	eth_tx += l;
 
@@ -2361,7 +2361,7 @@ void processipv6in(sessionidt s, tunnelidt t, uint8_t *p, uint16_t l)
 		snoop_send_packet(p, l, session[s].snoop_ip, session[s].snoop_port);
 	}
 
-	update_sessions_in_stat(s, l);
+	update_sessions_in_stat(s, l, p);
 
 	eth_tx += l;
 
@@ -2395,13 +2395,13 @@ void send_ipin(sessionidt s, uint8_t *buf, int len)
 		snoop_send_packet(buf, len, session[s].snoop_ip, session[s].snoop_port);
 	}
 
-#ifdef FREETRAFFIC
-	if (free_traffic(session[s].free_traffic, buf, len)) {
-		increment_counter(&session[s].fcin, &session[s].fcin_wrap, len);
-		session[s].fcin_delta += len;
-		sess_local[s].fcin += len;
-	}
-#endif //FREETRAFFIC
+//#ifdef FREETRAFFIC
+//	if (free_traffic(session[s].free_traffic, buf, len)) {
+//		increment_counter(&session[s].fcin, &session[s].fcin_wrap, len);
+//		session[s].fcin_delta += len;
+//		sess_local[s].fcin += len;
+//	}
+//#endif //FREETRAFFIC
 
 	// Increment packet counters
 	increment_counter(&session[s].cin, &session[s].cin_wrap, len);

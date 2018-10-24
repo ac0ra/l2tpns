@@ -14,6 +14,7 @@
 #include <arpa/inet.h>
 #include <sys/types.h>
 #include <libcli.h>
+#include "dhcp6.h"
 
 #define VERSION	"2.2.1.2fdn3.19"
 
@@ -749,6 +750,7 @@ typedef struct
 	in_addr_t	peer_address;
 	int		send_garp;			// Set to true to garp for vip address on startup
 
+	int		target_uid;
 	int		dump_speed;
 	char		plugins[64][MAXPLUGINS];
 	char		old_plugins[64][MAXPLUGINS];

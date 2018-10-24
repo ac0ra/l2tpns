@@ -48,12 +48,12 @@ static int bgp_send_update(struct bgp_peer *peer);
 static int bgp_send_update6(struct bgp_peer *peer);
 static int bgp_send_notification(struct bgp_peer *peer, uint8_t code,
     uint8_t subcode);
+
 static uint16_t our_as;
 static struct bgp_route_list *bgp_routes = 0;
 static struct bgp_route6_list *bgp_routes6 = 0;
 
 int bgp_configured = 0;
-struct bgp_ip_prefix *bgp_routes = 0;
 struct bgp_peer *bgp_peers = 0;
 
 /* prepare peer structure, globals */
@@ -426,7 +426,7 @@ static struct bgp_route6_list *bgp_insert_route6(struct bgp_route6_list *head,
     struct bgp_route6_list *p = head;
     struct bgp_route6_list *e = 0;
 
-    while (p)
+    while (p && memcmp(&p->dest, &new->dest, sizeof(p->dest)) < 0)
     {
 	e = p;
 	p = p->next;
@@ -455,25 +455,38 @@ static struct bgp_route6_list *bgp_insert_route6(struct bgp_route6_list *head,
  */
 int bgp_add_route(in_addr_t ip, int prefixlen)
 {
-    struct bgp_ip_prefix add;
-	int i;
+    struct bgp_route_list *r = bgp_routes;
+    struct bgp_route_list add;
+    int i;
 
     add.dest.prefix = ip;
     add.dest.len = prefixlen;
     add.next = 0;
 
     /* check for duplicate */
-    for (i=0;i < BGP_MAX_ROUTES; i++)
+    while (r)
     {
-			if (!memcmp(&bgp_routes[i], &add, sizeof(bgp_routes[i])))
-				return 1; /* already covered */
+	i = memcmp(&r->dest, &add.dest, sizeof(r->dest));
+	if (!i)
+	    return 1; /* already covered */
 
-			if (!bgp_routes[i].len) 
-			{
-				memcpy(&bgp_routes[i], &add, sizeof(bgp_routes[i]));
-				break;
-			}
+	if (i > 0)
+	    break;
+
+	r = r->next;
     }
+
+    /* insert into route list; sorted */
+    if (!(r = malloc(sizeof(*r))))
+    {
+	LOG(0, 0, 0, "Can't allocate route for %s/%d (%s)\n",
+	    fmtaddr(add.dest.prefix, 0), add.dest.len, strerror(errno));
+
+	return 0;
+    }
+
+    memcpy(r, &add, sizeof(*r));
+    bgp_routes = bgp_insert_route(bgp_routes, r);
 
     /* flag established peers for update */
     for (i = 0; i < BGP_NUM_PEERS; i++)
@@ -481,7 +494,7 @@ int bgp_add_route(in_addr_t ip, int prefixlen)
 	    bgp_peers[i].update_routes = 1;
 
     LOG(4, 0, 0, "Registered BGP route %s/%d\n",
-	fmtaddr(add.prefix, 0), add.len);
+	fmtaddr(add.dest.prefix, 0), add.dest.len);
 
     return 1;
 }
@@ -542,40 +555,41 @@ int bgp_add_route6(struct in6_addr ip, int prefixlen)
 /* remove route from list for peers */
 int bgp_del_route(in_addr_t ip, int prefixlen)
 {
+    struct bgp_route_list *r = bgp_routes;
+    struct bgp_route_list *e = 0;
+    struct bgp_route_list del;
     int i;
-	struct bgp_ip_prefix del;
 
     del.dest.prefix = ip;
     del.dest.len = prefixlen;
     del.next = 0;
 
-    /* find route to be removed */
-    for (i=0;i < BGP_MAX_ROUTES; i++)
+    /* find entry in routes list and remove */
+    while (r)
     {
-			if (!memcmp(&bgp_routes[i], &del, sizeof(bgp_routes[i]))) {
-				memset(&bgp_routes[i], 0, sizeof(bgp_routes[i])); //Clear the route
-				break;
-			}
+	i = memcmp(&r->dest, &del.dest, sizeof(r->dest));
+	if (!i)
+	{
+	    if (e)
+		e->next = r->next;
+	    else
+	    	bgp_routes = r->next;
 
-			if (!bgp_routes[i].len) 
-				return 1; //not found.
+	    free(r);
+	    break;
+	}
+
+	e = r;
+
+	if (i > 0)
+	    r = 0; /* stop */
+	else
+	    r = r->next;
     }
 
-    //Now we need to shuffle things along
-    while (i < BGP_MAX_ROUTES) {
-	if (bgp_routes[i+1].len == 0) {
-		break; //We've finished
-	}
-	if (bgp_routes[i].len != 0) {
-		LOG(0,0,0, "Failed to remove a route! BGP route table likely now broken.\n");
-		return 1;
-	}
-	if (bgp_routes[i+1].len) {
-		memcpy(&bgp_routes[i], &bgp_routes[i+1], sizeof(bgp_routes[i+1]));
-		memset(&bgp_routes[i+1], 0, sizeof(bgp_routes[i+1]));
-	}
-	i++;
-    }
+    /* not found */
+    if (!r)
+	return 1;
 
     /* flag established peers for update */
     for (i = 0; i < BGP_NUM_PEERS; i++)
@@ -583,7 +597,7 @@ int bgp_del_route(in_addr_t ip, int prefixlen)
 	    bgp_peers[i].update_routes = 1;
 
     LOG(4, 0, 0, "Removed BGP route %s/%d\n",
-	fmtaddr(del.prefix, 0), del.len);
+	fmtaddr(del.dest.prefix, 0), del.dest.len);
 
     return 1;
 }
@@ -1434,20 +1448,10 @@ static int bgp_send_update(struct bgp_peer *peer)
     uint16_t attr_len;
     uint16_t len = sizeof(peer->outbuf->packet.header);
     struct bgp_route_list *have = peer->routes;
-    uint32_t want_index = 0;
-    struct bgp_ip_prefix *want_array = peer->routing ? bgp_routes : 0;
-    struct bgp_ip_prefix *want = 0;
-    struct bgp_route_list *add = 0;
+    struct bgp_route_list *want = peer->routing ? bgp_routes : 0;
     struct bgp_route_list *e = 0;
+    struct bgp_route_list *add = 0;
     int s;
-
-    if (peer->routing) {
-	if (want_array[0].len != 0) {
-		want = &want_array[0];
-	} else {
-		want = 0;
-	}
-    }
 
     char *data = (char *) &peer->outbuf->packet.data;
 
@@ -1470,27 +1474,9 @@ static int bgp_send_update(struct bgp_peer *peer)
     /* find differences */
     while ((have || want) && data < (max - sizeof(struct bgp_ip_prefix)))
     {
-
-	    /*
-	     * A bug was here.
-	     *
-	     * A race condition used to develop, where have and want are
-	     * in a different ORDER, causing memcmp to ALWAYS wish to
-	     * resend out a particular BGP announcement.
-	     *
-	     * have is equivalent to bgp_peer->routes
-	     * want is equivalent to bgp_routes
-	     *
-	     * The solution was to remove any sorting of bgp_routes
-	     * and bgp_peer->routes. Changes to bgp_add_route() and 
-	     * bgp_insert_route() were made to fix this bug.
-	     *
-	     * Rob - 14/10/2011.
-	     */
-
 	if (have)
 	    s = want
-		? memcmp(&have->dest, want, sizeof(have->dest))
+		? memcmp(&have->dest, &want->dest, sizeof(have->dest))
 	    	: -1;
 	else
 	    s = 1;
@@ -1522,9 +1508,7 @@ static int bgp_send_update(struct bgp_peer *peer)
 	    {
 		e = have; /* stash the last found to relink above */
 		have = have->next;
-		//this is an array now
-		want_index++;
-		want = (want_array[want_index].len != 0) ? &want_array[want_index] : 0;
+		want = want->next;
 	    }
 	    else if (s > 0) /* addition reqd. */
 	    {
@@ -1535,20 +1519,10 @@ static int bgp_send_update(struct bgp_peer *peer)
 		    	break;
 		}
 		else
-		{
-		    if (!(add = malloc(sizeof(struct bgp_route_list))))
-		    {
-			LOG(0, 0, 0, "Can't allocate route for %s/%d (%s)\n",
-			fmtaddr(want->prefix, 0), add->dest.len, strerror(errno));
+		    add = want;
 
-			return 0;
-		    }
-		    memcpy(&add->dest, want, sizeof(struct bgp_ip_prefix));
-		}
-
-		//this is an array now
-		want_index++;
-		want = (want_array[want_index].len != 0) ? &want_array[want_index] : 0;
+		if (want)
+		    want = want->next;
 	    }
 	}
     }
@@ -1566,8 +1540,17 @@ static int bgp_send_update(struct bgp_peer *peer)
 
     if (add)
     {
-	add->next = 0;
-	peer->routes = bgp_insert_route(peer->routes, add);
+	if (!(e = malloc(sizeof(*e))))
+	{
+	    LOG(0, 0, 0, "Can't allocate route for %s/%d (%s)\n",
+		fmtaddr(add->dest.prefix, 0), add->dest.len, strerror(errno));
+
+	    return 0;
+	}
+
+	memcpy(e, add, sizeof(*e));
+	e->next = 0;
+	peer->routes = bgp_insert_route(peer->routes, e);
 
 	attr_len = htons(peer->path_attr_len);
 	memcpy(data, &attr_len, sizeof(attr_len));
@@ -1583,7 +1566,7 @@ static int bgp_send_update(struct bgp_peer *peer)
 	data += s;
 	len += s;
 
-	LOG(3, 0, 0, "Advertising route %s/%d to BGP peer %s\n",
+	LOG(5, 0, 0, "Advertising route %s/%d to BGP peer %s\n",
 	    fmtaddr(add->dest.prefix, 0), add->dest.len, peer->name);
     }
     else

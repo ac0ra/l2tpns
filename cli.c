@@ -21,6 +21,7 @@
 #include <dlfcn.h>
 #include <netdb.h>
 #include <libcli.h>
+#include <math.h>
 
 #include "dhcp6.h"
 #include "l2tpns.h"
@@ -107,7 +108,7 @@ static int cmd_reload(struct cli_def *cli, const char *command, char **argv, int
 static int cmd_setforward(struct cli_def *cli, const char *command, char **argv, int argc);
 static int cmd_show_rmtlnsconf(struct cli_def *cli, const char *command, char **argv, int argc);
 
-static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int argc);
+//static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int argc);
 static int cmd_add_ip_pool(struct cli_def *cli, char *command, char **argv, int argc);
 
 static int regular_stuff(struct cli_def *cli);
@@ -237,7 +238,7 @@ void init_cli()
 
 	c = cli_register_command(cli, NULL, "load", NULL, PRIVILEGE_PRIVILEGED, MODE_CONFIG, NULL);
 	cli_register_command(cli, c, "plugin", cmd_load_plugin, PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Load a plugin");
-	cli_register_command(cli, c, "ip-pool", cmd_load_ip_pool, PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Load an IP-Pool");
+//	cli_register_command(cli, c, "ip-pool", cmd_load_ip_pool, PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Load an IP-Pool");
 
 	c = cli_register_command(cli, NULL, "remove", NULL, PRIVILEGE_PRIVILEGED, MODE_CONFIG, NULL);
 	cli_register_command(cli, c, "plugin", cmd_remove_plugin, PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Remove a plugin");
@@ -1783,9 +1784,6 @@ static int cmd_remove_plugin(struct cli_def *cli, const char *command, char **ar
 
 static int cmd_add_ip_pool(struct cli_def *cli, char *command, char **argv, int argc)
 {
-	uint8_t x = 0;
-	uint8_t y = 0;
-	
 	if (CLI_HELP_REQUESTED)
 		return cli_arg_help(cli, argc > 2, "IP-RANGE", "IP or network to add", "IP-POOL", "Name of IP pool (or 'default')", NULL);
 
@@ -1796,81 +1794,77 @@ static int cmd_add_ip_pool(struct cli_def *cli, char *command, char **argv, int 
 	}
 
 	if (strcmp(argv[1], "default") != 0) {
-		x = argv[1][0];
-		y = argv[1][1];
-		cli_print(cli,"Adding %s to pool %s.", argv[0], argv[1]);
+		cli_print(cli,"There are no pools other than default");
+		return CLI_OK;
 	} else {
 		cli_print(cli,"Adding %s to the default pool.", argv[0]);
 	}
 
-	add_ip_range(argv[0], x, y);
+	add_ip_range(argv[0]);
 	
 	if (ip_address_pool == NULL)
 	{
-		cli_error(cli, "Unable to add to IP Pool %c%c. Check that it exists.", x, y);
+		cli_error(cli, "Unable to add to IP Pool %c%c. Check that it exists.");
 		return CLI_OK;
 	}
 
 	rebuild_address_pool();
 
-	if (strcmp(argv[1], "default") != 0)
-		cli_print(cli, "Range added. Please remember to add it to the config file /etc/l2tpns/ip_pool.%c%c", x,y);
-	else
-		cli_print(cli, "Range added. Please remember to add it to the config file /etc/l2tpns/ip_pool");
+	cli_print(cli, "Range added. Please remember to add it to the config file /etc/l2tpns/ip_pool");
 	return CLI_OK;
 }
 
-static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int argc)
-{
-	uint8_t x,y,i = 0;
+//static int cmd_load_ip_pool(struct cli_def *cli, char *command, char **argv, int argc)
+//{
+//	uint8_t x,y,i = 0;
 
-	if (CLI_HELP_REQUESTED)
-		return cli_arg_help(cli, argc > 1,
-			"IP-POOL", "Name of IP pool to load", NULL);
+//	if (CLI_HELP_REQUESTED)
+//		return cli_arg_help(cli, argc > 1,
+//			"IP-POOL", "Name of IP pool to load", NULL);
 
-	if (argc != 1)
-	{
-		cli_error(cli, "Specify an IP pool to load");
-		return CLI_OK;
-	}
+//	if (argc != 1)
+//	{
+//		cli_error(cli, "Specify an IP pool to load");
+//		return CLI_OK;
+//	}
 
-	x = argv[0][0];
-	y = argv[0][1];
+//	x = argv[0][0];
+//	y = argv[0][1];
 
-	if (ip_address_pool != 0)
-	{
-		cli_error(cli, "IP Pool %c%c is already loaded", x, y);
-		return CLI_OK;
-	}
+//	if (ip_address_pool != 0)
+//	{
+//		cli_error(cli, "IP Pool %c%c is already loaded", x, y);
+//		return CLI_OK;
+//	}
 
 	//Add the IP Pool
-	initippool();
+//	initippool();
 
-	if (ip_address_pool == NULL)
-	{
-		cli_error(cli, "Unable to load IP Pool %c%c. Check that it exists on the filesystem.", x, y);
-		return CLI_OK;
-	}
+//	if (ip_address_pool == NULL)
+//	{
+//		cli_error(cli, "Unable to load IP Pool %c%c. Check that it exists on the filesystem.", x, y);
+//		return CLI_OK;
+//	}
 
-        cli_print(cli, "Pool %s loaded.", argv[0]);
+//        cli_print(cli, "Pool %s loaded.", argv[0]);
 
 	//Set each peer to reload.
-        for (i = 0; i < BGP_NUM_PEERS; i++)
-        {
-                if (!*bgp_peers[i].name)
-                        continue;
+//        for (i = 0; i < BGP_NUM_PEERS; i++)
+//        {
+//                if (!*bgp_peers[i].name)
+//                        continue;
 
-                bgp_peers[i].update_routes = 1;
-                bgp_peers[i].routing = 1;
-                cli_print(cli, "\tAdding route and sending update to peer %s", bgp_peers[i].name);
+//                bgp_peers[i].update_routes = 1;
+//                bgp_peers[i].routing = 1;
+//                cli_print(cli, "\tAdding route and sending update to peer %s", bgp_peers[i].name);
 
 
-        }
+//        }
 
-        rebuild_address_pool();
+//        rebuild_address_pool();
 
-	return CLI_OK;
-}
+//	return CLI_OK;
+//}
 
 
 

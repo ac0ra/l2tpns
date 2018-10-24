@@ -436,6 +436,7 @@ int plugin_init(struct pluginfuncs *funcs)
 
 void plugin_done()
 {
+	int i;
     if (!iam_master)	// Never became master. nothing to do.
 	return;
 

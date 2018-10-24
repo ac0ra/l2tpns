@@ -24,7 +24,7 @@ LDFLAGS =
 LDLIBS =
 INSTALL = install -c -D
 
-l2tpns.LIBS = -lcli -ldl
+l2tpns.LIBS = -lm -lcli -ldl
 
 OBJS = arp.o cli.o cluster.o constants.o control.o icmp.o l2tpns.o \
     ll.o md5.o ppp.o radius.o tbf.o util.o pppoe.o l2tplac.o dhcp6.o ipv6_u.o freetraffic.o
@@ -143,7 +143,7 @@ ipv6_u.o: ipv6_u.c ipv6_u.h
 bgp.o: bgp.c dhcp6.h l2tpns.h bgp.h util.h
 appendrealm.so: appendrealm.c l2tpns.h plugin.h control.h
 autosnoop.so: autosnoop.c dhcp6.h l2tpns.h plugin.h
-clitousername.so: clitusername.c l2tpns.h plugin.h
+clitousername.so: clitousername.c l2tpns.h plugin.h
 autothrottle.so: autothrottle.c dhcp6.h l2tpns.h plugin.h
 editcsid.so: editcsid.c l2tpns.h plugin.h
 garden.so: garden.c dhcp6.h l2tpns.h plugin.h control.h

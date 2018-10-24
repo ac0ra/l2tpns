@@ -39,6 +39,7 @@
 #include <libcli.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <math.h>
 
 #include "md5.h"
 #include "dhcp6.h"
@@ -5044,41 +5045,41 @@ static void add_to_ip_pool(in_addr_t addr, int prefixlen)
 	}
 }
 // TO BE REMOVED
-// void add_ip_range(char* buf, uint8_t x,uint8_t y) {
-//	char *p;
-//	char *pool = buf;
+void add_ip_range(char* buf) {
+	char *p;
+	char *pool = buf;
 	// Remove anything following the last newline.
-//	if ((p = (char *)strrchr(buf, '\n'))) *p = 0;
-//	if ((p = (char *)strchr(pool, '/')))
-//	{
+	if ((p = (char *)strrchr(buf, '\n'))) *p = 0;
+	if ((p = (char *)strchr(pool, '/')))
+	{
 		// It's a range
-//		int numbits = 0;
-//		in_addr_t start = 0, mask = 0;
+		int numbits = 0;
+		in_addr_t start = 0, mask = 0;
 
-//		LOG(2, 0, 0, "Adding IP address range %s\n", buf);
-//		*p++ = 0;
-//		if (!*p || !(numbits = atoi(p)))
-//		{
-//			LOG(0, 0, 0, "Invalid pool range %s\n", buf);
-//			return;
-//		}
-//		start = ntohl(inet_addr(pool));
-//		mask = (in_addr_t) (pow(2, numbits) - 1) << (32 - numbits);
+		LOG(2, 0, 0, "Adding IP address range %s\n", buf);
+		*p++ = 0;
+		if (!*p || !(numbits = atoi(p)))
+		{
+			LOG(0, 0, 0, "Invalid pool range %s\n", buf);
+			return;
+		}
+		start = ntohl(inet_addr(pool));
+		mask = (in_addr_t) (pow(2, numbits) - 1) << (32 - numbits);
 
 		// Add a static route for this pool
-//		LOG(5, 0, 0, "Adding route for address pool %s/%u\n",
-//			fmtaddr(htonl(start), 0), 32 + mask);
+		LOG(5, 0, 0, "Adding route for address pool %s/%u\n",
+			fmtaddr(htonl(start), 0), 32 + mask);
 
-//		routeset(0, start, mask, 0, 1);
+		routeset(0, start, mask, 0, 1);
 
-//		add_to_ip_pool(start, mask,x,y);
-//	}
-//	else
-//	{
+		add_to_ip_pool(start, mask);
+	}
+	else
+	{
 		// It's a single ip address
-//	  add_to_ip_pool(ntohl(inet_addr(pool)), 0,x,y);
-//	}
-//}
+	  add_to_ip_pool(ntohl(inet_addr(pool)), 0);
+	}
+}
 
 // Initialize the IP address pool
 
